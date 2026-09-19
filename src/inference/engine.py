@@ -159,7 +159,12 @@ class InferenceEngine(threading.Thread):
 
             # ── Feature Extraction — RKNN NPU hoặc ONNX fallback ──
             if self._use_rknn:
-                outputs = self.rknn.inference(inputs=[f_np, e_np, m_np])
+                # RKNN NPU kỳ vọng NHWC — transpose từ NCHW [1,3,H,W] → [1,H,W,3]
+                outputs = self.rknn.inference(inputs=[
+                    f_np.transpose(0, 2, 3, 1),
+                    e_np.transpose(0, 2, 3, 1),
+                    m_np.transpose(0, 2, 3, 1),
+                ])
                 frame_feature = outputs[0]    # [1, 256] float
                 attn_w = outputs[1]           # [1, 3]  float
             else:
