@@ -1,3 +1,4 @@
-﻿# Git LFS configuration for large binary model files
+# Git LFS configuration for large binary model files
 *.onnx filter=lfs diff=lfs merge=lfs -text
 *.task filter=lfs diff=lfs merge=lfs -text
+*.rknn filter=lfs diff=lfs merge=lfs -text

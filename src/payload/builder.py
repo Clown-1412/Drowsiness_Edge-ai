@@ -48,7 +48,8 @@ class DMSPayload:
         }
 
 
-def build_payload(level_id: int, face_detected: bool) -> DMSPayload:
+def build_payload(level_id: int, face_detected: bool,
+                   buffer_ready: bool = True) -> DMSPayload:
     """
     Chuyển đổi output của StateMachine thành Payload.
 
@@ -58,11 +59,18 @@ def build_payload(level_id: int, face_detected: bool) -> DMSPayload:
         Level 0 (Ngủ gật)   → 2 (MICROSLEEP)
         Khác                → 3 (INIT)
 
+    Khi ``buffer_ready is False`` (chưa đủ 16 frames cho TCN), luôn trả về
+    trạng thái INIT (3) để ESP32 biết hệ thống đang khởi động.
+
     Args:
         level_id:      Từ StateMachine (0, 1, hoặc 2)
         face_detected: True nếu MediaPipe phát hiện khuôn mặt
+        buffer_ready:  True khi TCN đã tích đủ 16 frames đặc trưng
     """
-    state_map = {1: 0, 2: 1, 0: 2}
-    driver_state    = state_map.get(level_id, 3)
+    if not buffer_ready:
+        driver_state = 3  # INIT — hệ thống đang buffer
+    else:
+        state_map = {1: 0, 2: 1, 0: 2}
+        driver_state = state_map.get(level_id, 3)
     tracking_status = 0 if face_detected else 1
     return DMSPayload(driver_state=driver_state, tracking_status=tracking_status)

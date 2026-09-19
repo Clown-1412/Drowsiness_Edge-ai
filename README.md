@@ -1,4 +1,4 @@
-﻿# Driver Drowsiness Monitoring System (Edge AI)
+# Driver Drowsiness Monitoring System (Edge AI)
 
 Hệ thống giám sát và phát hiện buồn ngủ của tài xế theo thời gian thực sử dụng mạng nơ-ron kết hợp **CNN-TCN** tối ưu hóa trên **ONNX Runtime** (hỗ trợ tăng tốc GPU với CUDA).
 
@@ -28,6 +28,7 @@ Drowsiness_Edge-ai/
 │   ├── classifier/             # State machine phân loại trạng thái
 │   ├── detection/              # Xử lý trích xuất khuôn mặt với MediaPipe
 │   ├── display/                # Renderer giao diện và overlay trực quan
+│   ├── debug/                  # Giao tiếp phần cứng gỡ lỗi (Serial COM, ESP32)
 │   ├── inference/              # Tiền xử lý và ONNX Runtime engine
 │   ├── payload/                # Đóng gói dữ liệu đầu ra
 │   ├── config.py               # Cấu hình tập trung (ngưỡng, kích thước, fps, ...)
@@ -50,7 +51,7 @@ Drowsiness_Edge-ai/
 ### 2. Cài đặt thư viện phụ thuộc
 
 ```bash
-pip install numpy opencv-python onnxruntime mediapipe
+pip install numpy opencv-python onnxruntime mediapipe pyserial
 # Hoặc cài onnxruntime-gpu nếu sử dụng card đồ họa NVIDIA:
 # pip install onnxruntime-gpu
 ```

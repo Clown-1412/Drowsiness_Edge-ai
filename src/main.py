@@ -11,6 +11,7 @@ import sys
 import time
 from pathlib import Path
 
+
 # Đảm bảo console Windows không bị lỗi UnicodeEncodeError khi print tiếng Việt / emoji
 if sys.platform == 'win32':
     try:
@@ -35,12 +36,14 @@ from src.config import (
     LANDMARK_TASK, LANDMARK_URL,
     MIN_FACE_DETECTION_CONFIDENCE, MIN_TRACKING_CONFIDENCE,
     MAR_THRESHOLD,
+    SERIAL_ENABLED, SERIAL_PORT, SERIAL_BAUDRATE, SERIAL_HEARTBEAT_INTERVAL,
 )
 from src.shared_state import SharedState
 from src.camera.capture import ThreadedCapture
 from src.detection.face_extractor import FaceRegionExtractor
 from src.inference.engine import InferenceEngine
 from src.payload.builder import build_payload
+from src.debug.serial_debugger import SerialDebugger
 from src.display.renderer import Renderer
 
 
@@ -75,7 +78,17 @@ def main():
     # ── 5. Khởi tạo Renderer ──
     renderer = Renderer()
 
-    # ── 6. Start threads ──
+    # ── 6. Khởi tạo Serial Debugger (Giao tiếp ESP32) ──
+    # Khởi tạo TRƯỚC khi start threads để thời gian chờ ESP32 boot (2s)
+    # không làm gián đoạn pipeline camera đang chạy.
+    debugger = SerialDebugger(
+        port=SERIAL_PORT,
+        baudrate=SERIAL_BAUDRATE,
+        heartbeat_interval=SERIAL_HEARTBEAT_INTERVAL,
+        enabled=SERIAL_ENABLED,
+    )
+
+    # ── 7. Start threads ──
     camera.start()
     inference.start()
 
@@ -132,9 +145,13 @@ def main():
                 current_mar    = state.current_mar
                 region_weights = list(state.region_weights)
                 level_id       = state.level_id
+                buffer_ready   = state.buffer_ready
 
-            # ── Build Payload ──
-            payload = build_payload(level_id, face_detected)
+            # ── Build Payload (truyền buffer_ready để gửi INIT khi đang buffer) ──
+            payload = build_payload(level_id, face_detected, buffer_ready)
+
+            # ── Gửi Serial sang ESP32 (On-Change + Heartbeat do SerialDebugger quản lý) ──
+            debugger.update(level_id, face_detected, payload.to_bytes(), current_time)
 
             # ── Tính FPS camera (display) ──
             camera_fps = 1.0 / max(current_time - prev_time, 0.001)
@@ -162,6 +179,7 @@ def main():
     finally:
         print("🧹 Đang dọn dẹp...")
         camera.stop()
+        debugger.close()
         inference.stop()
         cv2.destroyAllWindows()
         print("✅ Đã thoát sạch")

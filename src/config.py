@@ -16,6 +16,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent   # d:\Python_pj\Drowsines
 MODEL_DIR    = PROJECT_ROOT / 'models'
 
 EXTRACTOR_ONNX = str(MODEL_DIR / 'dms_feature_extractor.onnx')
+EXTRACTOR_RKNN = str(MODEL_DIR / 'dms_feature_extractor.rknn')
 CLASSIFIER_ONNX = str(MODEL_DIR / 'dms_tcn_classifier.onnx')
 LANDMARK_TASK   = str(MODEL_DIR / 'face_landmarker.task')
 LANDMARK_URL    = (
@@ -34,8 +35,8 @@ SAMPLE_INTERVAL = 1.0 / TARGET_FPS   # 0.2 s / sample
 # ──────────────────────────────────────────────────────────────────────────────
 # Ngưỡng phân loại — đồng bộ 100% với run_webcam_onnx.py
 # ──────────────────────────────────────────────────────────────────────────────
-DROWSY_THRESHOLD  = 0.55        # Ngưỡng kích hoạt Drowsy
-MAR_THRESHOLD     = 0.50        # Ngưỡng ngáp: MAR >= 0.50
+DROWSY_THRESHOLD  = 0.65        # Ngưỡng kích hoạt Drowsy
+MAR_THRESHOLD     = 0.70        # Ngưỡng ngáp: MAR >= 0.70
 ALPHA             = 0.65        # Hệ số EMA smoothing
 YAWN_COOLDOWN_SEC = 4.0         # Cooldown sau khi ngáp (giây)
 
@@ -53,10 +54,18 @@ MIN_FACE_DETECTION_CONFIDENCE = 0.5
 MIN_TRACKING_CONFIDENCE       = 0.5
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Preprocessing — ImageNet normalization (giữ nguyên)
+# Preprocessing — ImageNet normalization
 # ──────────────────────────────────────────────────────────────────────────────
 IMAGENET_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
 IMAGENET_STD  = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Cấu hình Serial / Debug ESP32
+# ──────────────────────────────────────────────────────────────────────────────
+SERIAL_ENABLED            = True        # Bật/tắt truyền Serial (False khi test không phần cứng)
+SERIAL_PORT               = 'COM1'      # Cổng Serial ESP32 (Linux: '/dev/ttyUSB0')
+SERIAL_BAUDRATE           = 115200      # Tốc độ baud (khớp DEBUG_SERIAL_BAUD trên ESP32)
+SERIAL_HEARTBEAT_INTERVAL = 3.0         # Chu kỳ heartbeat lặp lại (giây)
 
 
 # ──────────────────────────────────────────────────────────────────────────────

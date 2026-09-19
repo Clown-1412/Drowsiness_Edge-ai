@@ -1,9 +1,11 @@
 """
-Thread 3: AI Inference — Quản lý ONNX sessions + Feature Buffer + TCN.
+Thread 3: AI Inference — Feature Extractor (RKNN NPU / ONNX fallback) + TCN.
 Chạy ở tần suất TARGET_FPS (5 Hz = mỗi 200ms).
-Đọc detection results từ SharedState, chạy ONNX, cập nhật kết quả.
+Đọc detection results từ SharedState, chạy inference, cập nhật kết quả.
 
-Logic inference clone 100% từ run_webcam_onnx.py L225-250.
+Feature Extractor: ưu tiên RKNN NPU (RK3588), fallback ONNX nếu không khả dụng.
+TCN Classifier: luôn chạy trên ONNX CPUExecutionProvider.
+Logic inference giữ nguyên 100% từ run_webcam_onnx.py L225-250.
 """
 import os
 import threading
@@ -13,7 +15,7 @@ from collections import deque
 import numpy as np
 
 from src.config import (
-    EXTRACTOR_ONNX, CLASSIFIER_ONNX,
+    EXTRACTOR_ONNX, EXTRACTOR_RKNN, CLASSIFIER_ONNX,
     SEQ_LEN, SAMPLE_INTERVAL,
     DROWSY_THRESHOLD, MAR_THRESHOLD, ALPHA, YAWN_COOLDOWN_SEC,
     setup_cuda_dlls,
@@ -21,6 +23,13 @@ from src.config import (
 from src.inference.preprocessor import preprocess
 from src.classifier.state_machine import DriverStateMachine
 from src.shared_state import SharedState
+
+# ── Detect RKNN availability (graceful fallback) ──
+try:
+    from rknnlite.api import RKNNLite
+    RKNN_AVAILABLE = True
+except ImportError:
+    RKNN_AVAILABLE = False
 
 # ── Nạp DLL CUDA TRƯỚC khi import onnxruntime ──
 setup_cuda_dlls()
@@ -62,33 +71,57 @@ class InferenceEngine(threading.Thread):
 
     def _init_sessions(self):
         """
-        Auto-chọn provider: CUDA → DML → CPU.
-        Clone logic demo gốc L70-82.
+        Khởi tạo backend suy luận:
+          - Feature Extractor: RKNN NPU (ưu tiên) → ONNX fallback
+          - TCN Classifier: luôn ONNX CPUExecutionProvider
         """
-        for path in [EXTRACTOR_ONNX, CLASSIFIER_ONNX]:
-            if not os.path.exists(path):
+        self._use_rknn = False
+
+        # ── Feature Extractor: thử RKNN NPU trước ──
+        if RKNN_AVAILABLE and os.path.exists(EXTRACTOR_RKNN):
+            try:
+                self.rknn = RKNNLite()
+                ret = self.rknn.load_rknn(EXTRACTOR_RKNN)
+                if ret != 0:
+                    raise RuntimeError(f"load_rknn failed (code={ret})")
+                ret = self.rknn.init_runtime(core_mask=RKNNLite.NPU_CORE_0)
+                if ret != 0:
+                    raise RuntimeError(f"init_runtime failed (code={ret})")
+                self._use_rknn = True
+                print("🚀 Feature Extractor: RKNN NPU (NPU_CORE_0)")
+            except Exception as e:
+                print(f"⚠️  RKNN init thất bại: {e} — fallback về ONNX")
+                self._use_rknn = False
+
+        # ── Feature Extractor: ONNX fallback ──
+        if not self._use_rknn:
+            if not os.path.exists(EXTRACTOR_ONNX):
                 raise FileNotFoundError(
-                    f"❌ Không tìm thấy file ONNX: {path}\n"
+                    f"❌ Không tìm thấy file ONNX: {EXTRACTOR_ONNX}\n"
                     "Vui lòng chạy export_to_onnx.py trước để xuất mô hình."
                 )
+            available = ort.get_available_providers()
+            if 'CUDAExecutionProvider' in available:
+                ext_providers = ['CUDAExecutionProvider', 'CPUExecutionProvider']
+            elif 'DmlExecutionProvider' in available:
+                ext_providers = ['DmlExecutionProvider', 'CPUExecutionProvider']
+            else:
+                ext_providers = ['CPUExecutionProvider']
+            self.session_extractor = ort.InferenceSession(
+                EXTRACTOR_ONNX, providers=ext_providers
+            )
+            print(f"🚀 Feature Extractor: ONNX ({ext_providers[0]})")
 
-        available = ort.get_available_providers()
-        if 'CUDAExecutionProvider' in available:
-            providers = ['CUDAExecutionProvider', 'CPUExecutionProvider']
-            print("🚀 ONNX Runtime Provider: CUDAExecutionProvider (GPU NVIDIA)")
-        elif 'DmlExecutionProvider' in available:
-            providers = ['DmlExecutionProvider', 'CPUExecutionProvider']
-            print("🚀 ONNX Runtime Provider: DmlExecutionProvider (DirectML)")
-        else:
-            providers = ['CPUExecutionProvider']
-            print("⚠️  ONNX Runtime Provider: CPUExecutionProvider")
-
-        self.session_extractor = ort.InferenceSession(
-            EXTRACTOR_ONNX, providers=providers
-        )
+        # ── TCN Classifier: luôn ONNX CPU ──
+        if not os.path.exists(CLASSIFIER_ONNX):
+            raise FileNotFoundError(
+                f"❌ Không tìm thấy file ONNX: {CLASSIFIER_ONNX}\n"
+                "Vui lòng chạy export_to_onnx.py trước để xuất mô hình."
+            )
         self.session_classifier = ort.InferenceSession(
-            CLASSIFIER_ONNX, providers=providers
+            CLASSIFIER_ONNX, providers=['CPUExecutionProvider']
         )
+        print("🧠 TCN Classifier: ONNX (CPUExecutionProvider)")
 
     def run(self):
         """Vòng lặp inference — chạy trên thread riêng."""
@@ -124,11 +157,16 @@ class InferenceEngine(threading.Thread):
             e_np = preprocess(eye)
             m_np = preprocess(mouth)
 
-            # ── Feature Extraction — clone 100% demo gốc L234-239 ──
-            frame_feature, attn_w = self.session_extractor.run(
-                None,
-                {'face_input': f_np, 'eye_input': e_np, 'mouth_input': m_np}
-            )
+            # ── Feature Extraction — RKNN NPU hoặc ONNX fallback ──
+            if self._use_rknn:
+                outputs = self.rknn.inference(inputs=[f_np, e_np, m_np])
+                frame_feature = outputs[0]    # [1, 256] float
+                attn_w = outputs[1]           # [1, 3]  float
+            else:
+                frame_feature, attn_w = self.session_extractor.run(
+                    None,
+                    {'face_input': f_np, 'eye_input': e_np, 'mouth_input': m_np}
+                )
             region_weights = attn_w[0].tolist()
             self.feature_buffer.append(frame_feature[0])   # shape: (256,)
 
@@ -173,5 +211,11 @@ class InferenceEngine(threading.Thread):
                     self.shared_state.region_weights = region_weights
 
     def stop(self):
-        """Dừng thread."""
+        """Dừng thread và giải phóng tài nguyên NPU (nếu có)."""
         self._stopped = True
+        if self._use_rknn and hasattr(self, 'rknn'):
+            try:
+                self.rknn.release()
+                print("🧹 RKNN runtime đã giải phóng")
+            except Exception:
+                pass
