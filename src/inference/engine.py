@@ -8,9 +8,19 @@ TCN Classifier: luôn chạy trên ONNX CPUExecutionProvider.
 Logic inference giữ nguyên 100% từ run_webcam_onnx.py L225-250.
 """
 import os
+import sys
 import threading
 import time
 from collections import deque
+
+if sys.platform == 'win32':
+    try:
+        if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
+            sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+        if sys.stderr and hasattr(sys.stderr, 'reconfigure'):
+            sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
 
 import numpy as np
 
@@ -20,7 +30,7 @@ from src.config import (
     DROWSY_THRESHOLD, MAR_THRESHOLD, ALPHA, YAWN_COOLDOWN_SEC,
     setup_cuda_dlls,
 )
-from src.inference.preprocessor import preprocess
+from src.inference.preprocessor import preprocess_crop_uint8, to_onnx_input
 from src.classifier.state_machine import DriverStateMachine
 from src.shared_state import SharedState
 
@@ -152,25 +162,26 @@ class InferenceEngine(threading.Thread):
             if not detected or face is None or eye is None or mouth is None:
                 continue
 
-            # ── Tiền xử lý: pure numpy — clone 100% demo gốc L229-231 ──
-            f_np = preprocess(face)
-            e_np = preprocess(eye)
-            m_np = preprocess(mouth)
+            # ── Tiền xử lý siêu nhẹ: chỉ resize ra uint8 NHWC (1, 224, 224, 3) ──
+            f_uint8 = preprocess_crop_uint8(face)
+            e_uint8 = preprocess_crop_uint8(eye)
+            m_uint8 = preprocess_crop_uint8(mouth)
 
             # ── Feature Extraction — RKNN NPU hoặc ONNX fallback ──
             if self._use_rknn:
-                # RKNN NPU kỳ vọng NHWC — transpose từ NCHW [1,3,H,W] → [1,H,W,3]
-                outputs = self.rknn.inference(inputs=[
-                    f_np.transpose(0, 2, 3, 1),
-                    e_np.transpose(0, 2, 3, 1),
-                    m_np.transpose(0, 2, 3, 1),
-                ])
+                # RKNN NPU nhận trực tiếp uint8 NHWC, tự động chuẩn hóa ImageNet ở phần cứng
+                outputs = self.rknn.inference(inputs=[f_uint8, e_uint8, m_uint8])
                 frame_feature = outputs[0]    # [1, 256] float
                 attn_w = outputs[1]           # [1, 3]  float
             else:
+                # ONNX Fallback: chuẩn hóa ImageNet float32 NCHW (1, 3, 224, 224)
                 frame_feature, attn_w = self.session_extractor.run(
                     None,
-                    {'face_input': f_np, 'eye_input': e_np, 'mouth_input': m_np}
+                    {
+                        'face_input': to_onnx_input(f_uint8),
+                        'eye_input': to_onnx_input(e_uint8),
+                        'mouth_input': to_onnx_input(m_uint8),
+                    }
                 )
             region_weights = attn_w[0].tolist()
             self.feature_buffer.append(frame_feature[0])   # shape: (256,)
