@@ -5,7 +5,7 @@ Layout dòng 1-3 giữ nguyên từ demo gốc (L279-293) + dòng 4-5 mới cho 
 import cv2
 import numpy as np
 
-from src.payload.builder import DMSPayload
+from src.payload.can_payload import CANPayload
 
 
 class Renderer:
@@ -13,22 +13,22 @@ class Renderer:
     Vẽ thông tin trạng thái DMS lên frame OpenCV.
 
     Layout:
-    ┌─────────────────────────────────────────────┐
-    │              Camera Frame                   │
-    ├─────────────────────────────────────────────┤
-    │ LEVEL X: ... (%)                            │  ← Giống demo gốc
-    │ FPS: x | Drowsy: x% | MAR: x.xx             │  ← Giống demo gốc
-    │ Attn → Face: x | Eye: x | Mouth: x          │  ← Giống demo gốc
-    │ PAYLOAD: 0x02 [00000010]                    │  ← MỚI
-    │ State: MICROSLEEP | Tracking: FACE_OK       │  ← MỚI
-    └─────────────────────────────────────────────┘
+    ┌─────────────────────────────────────────────────────────┐
+    │                     Camera Frame                        │
+    ├─────────────────────────────────────────────────────────┤
+    │ LEVEL X: ... (%)                                        │  ← Giống demo gốc
+    │ FPS: x | Drowsy: x% | MAR: x.xx                         │  ← Giống demo gốc
+    │ Attn → Face: x | Eye: x | Mouth: x                      │  ← Giống demo gốc
+    │ CAN 8B: 00 01 02 03 01 00 00 00                         │  ← CAN Payload Hex
+    │ State: MICROSLEEP | Face: OK | Alert: CRITICAL | AC: 3  │  ← Chi tiết giải mã
+    └─────────────────────────────────────────────────────────┘
     """
 
     def draw(self, frame: np.ndarray,
              label_text: str, label_color: tuple,
              smoothed_drowsy_prob: float, current_mar: float,
              region_weights: list, camera_fps: float,
-             payload: DMSPayload, face_detected: bool) -> np.ndarray:
+             payload: CANPayload, face_detected: bool) -> np.ndarray:
         """
         Vẽ overlay lên frame (in-place). Trả về frame đã vẽ.
 
@@ -40,14 +40,14 @@ class Renderer:
             current_mar:          Mouth Aspect Ratio hiện tại
             region_weights:       [face_w, eye_w, mouth_w] từ attention
             camera_fps:           FPS hiển thị camera
-            payload:              DMSPayload object
+            payload:              CANPayload object
             face_detected:        True nếu có mặt
         """
         h, w = frame.shape[:2]
 
         # ── Nền mờ cho text — mở rộng chứa thêm Payload (5 dòng) ──
         overlay = frame.copy()
-        cv2.rectangle(overlay, (10, h - 170), (520, h - 10), (0, 0, 0), -1)
+        cv2.rectangle(overlay, (10, h - 175), (550, h - 10), (0, 0, 0), -1)
         cv2.addWeighted(overlay, 0.55, frame, 0.45, 0, frame)
 
         # ── Dòng 1: Level label — giống hệt demo gốc L285-286 ──
@@ -74,20 +74,20 @@ class Renderer:
             (20, h - 80), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 255, 255), 1
         )
 
-        # ── Dòng 4: Payload hex + binary — MỚI ──
+        # ── Dòng 4: Payload CAN 8-byte hex ──
         payload_info = payload.to_display_dict()
         cv2.putText(
             frame,
-            f"PAYLOAD: {payload_info['hex']} [{payload_info['binary']}]",
+            f"CAN 8B: {payload_info['hex']}",
             (20, h - 50), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 200, 255), 2
         )
 
-        # ── Dòng 5: Payload decoded — MỚI ──
+        # ── Dòng 5: Payload decoded ──
         cv2.putText(
             frame,
-            f"State: {payload_info['state']} | "
-            f"Tracking: {payload_info['tracking']}",
-            (20, h - 22), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (200, 200, 200), 1
+            f"State: {payload_info['state']} | Face: {payload_info['tracking']} | "
+            f"Alert: {payload_info['alert']} | AC: {payload_info['alive']}",
+            (20, h - 22), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (200, 200, 200), 1
         )
 
         return frame

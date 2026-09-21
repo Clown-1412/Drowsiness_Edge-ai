@@ -37,12 +37,15 @@ from src.config import (
     MIN_FACE_DETECTION_CONFIDENCE, MIN_TRACKING_CONFIDENCE,
     MAR_THRESHOLD,
     SERIAL_ENABLED, SERIAL_PORT, SERIAL_BAUDRATE, SERIAL_HEARTBEAT_INTERVAL,
+    CAN_ENABLED, CAN_INTERFACE, CAN_CHANNEL,
+    CAN_BAUDRATE, CAN_ARBITRATION_ID, CAN_SEND_INTERVAL,
 )
 from src.shared_state import SharedState
 from src.camera.capture import ThreadedCapture
 from src.detection.face_extractor import FaceRegionExtractor
 from src.inference.engine import InferenceEngine
-from src.payload.builder import build_payload
+from src.payload.can_payload import build_can_payload
+from src.can_bus.can_sender import CANSenderThread
 from src.debug.serial_debugger import SerialDebugger
 from src.display.renderer import Renderer
 
@@ -88,9 +91,20 @@ def main():
         enabled=SERIAL_ENABLED,
     )
 
-    # ── 7. Start threads ──
+    # ── 7. Khởi tạo CAN Bus Sender (Giao tiếp Ngoại vi Ô tô) ──
+    can_sender = CANSenderThread(
+        interface=CAN_INTERFACE,
+        channel=CAN_CHANNEL,
+        can_id=CAN_ARBITRATION_ID,
+        baudrate=CAN_BAUDRATE,
+        send_interval=CAN_SEND_INTERVAL,
+        enabled=CAN_ENABLED,
+    )
+
+    # ── 8. Start threads ──
     camera.start()
     inference.start()
+    can_sender.start()
 
     print("\n✅ Tất cả threads đã khởi động")
     print("   Nhấn 'q' để thoát\n")
@@ -147,11 +161,14 @@ def main():
                 level_id       = state.level_id
                 buffer_ready   = state.buffer_ready
 
-            # ── Build Payload (truyền buffer_ready để gửi INIT khi đang buffer) ──
-            payload = build_payload(level_id, face_detected, buffer_ready)
+            # ── Build Payload 8-byte (thống nhất cho cả Serial UART và CAN Bus) ──
+            payload = build_can_payload(level_id, face_detected, buffer_ready)
 
             # ── Gửi Serial sang ESP32 (On-Change + Heartbeat do SerialDebugger quản lý) ──
             debugger.update(level_id, face_detected, payload.to_bytes(), current_time)
+
+            # ── Đẩy payload sang CAN Sender Thread (non-blocking) ──
+            can_sender.post(payload)
 
             # ── Tính FPS camera (display) ──
             camera_fps = 1.0 / max(current_time - prev_time, 0.001)
@@ -180,6 +197,7 @@ def main():
         print("🧹 Đang dọn dẹp...")
         camera.stop()
         debugger.close()
+        can_sender.stop()
         inference.stop()
         cv2.destroyAllWindows()
         print("✅ Đã thoát sạch")

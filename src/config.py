@@ -67,6 +67,16 @@ SERIAL_PORT               = 'COM1'      # Cổng Serial ESP32 (Linux: '/dev/ttyU
 SERIAL_BAUDRATE           = 115200      # Tốc độ baud (khớp DEBUG_SERIAL_BAUD trên ESP32)
 SERIAL_HEARTBEAT_INTERVAL = 3.0         # Chu kỳ heartbeat lặp lại (giây)
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Cấu hình CAN Bus (RK3588 Native SocketCAN can0 / PC dev test)
+# ──────────────────────────────────────────────────────────────────────────────
+CAN_ENABLED        = False          # Bật/tắt CAN Bus (False khi test không phần cứng)
+CAN_INTERFACE      = 'socketcan' if sys.platform.startswith('linux') else 'virtual'
+CAN_CHANNEL        = 'can0' if sys.platform.startswith('linux') else 'vcan0'
+CAN_BAUDRATE       = 500000         # CAN bus baudrate (500 kbps)
+CAN_ARBITRATION_ID = 0x200          # CAN message ID (11-bit standard)
+CAN_SEND_INTERVAL  = 0.2            # Chu kỳ gửi CAN (giây) — 5Hz đồng bộ với Inference
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Hàm hỗ trợ
