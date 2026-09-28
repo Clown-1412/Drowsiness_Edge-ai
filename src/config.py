@@ -76,6 +76,13 @@ CAN_CHANNEL        = 'can0' if sys.platform.startswith('linux') else 'vcan0'
 CAN_BAUDRATE       = 500000         # CAN bus baudrate (500 kbps)
 CAN_ARBITRATION_ID = 0x200          # CAN message ID (11-bit standard)
 CAN_SEND_INTERVAL  = 0.2            # Chu kỳ gửi CAN (giây) — 5Hz đồng bộ với Inference
+CAN_FEEDBACK_ID    = 0x201          # CAN message ID phản hồi từ ECU Alert ESP32
+CAN_WATCHDOG_TIMEOUT = 1.5          # Thời gian tối đa (giây) chờ phản hồi trước khi coi ECU Alert offline
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Cấu hình HUD Overlay (Hiển thị trạng thái ECU Alert trên OpenCV)
+# ──────────────────────────────────────────────────────────────────────────────
+HUD_ALERT_ECU_ENABLED = True        # Bật/tắt hiển thị trạng thái ECU Alert trên OpenCV debug window
 
 
 # ──────────────────────────────────────────────────────────────────────────────

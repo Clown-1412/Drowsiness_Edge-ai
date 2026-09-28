@@ -43,3 +43,10 @@ class SharedState:
 
     # ── Hệ thống ──
     inference_fps: float = 0.0
+
+    # ── ECU Alert Feedback (CAN 0x201 — từ ESP32 gửi về) ──
+    alert_ecu_connected:  bool  = False   # True khi nhận được gói 0x201 trong khoảng watchdog
+    alert_ecu_state:      int   = 0       # Trạng thái cảnh báo đang thực thi (0=IDLE, 1=DROWSY, 2=DOZING, 3=NO_FACE)
+    alert_ecu_hw_health:  int   = 0x07    # Bitfield sức khỏe phần cứng (bit0=SD, bit1=I2S, bit2=Buzzer)
+    alert_ecu_error_code: int   = 0       # Mã lỗi chi tiết từ ESP32
+    last_feedback_time:   float = 0.0     # time.time() lần cuối nhận gói 0x201

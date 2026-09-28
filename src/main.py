@@ -39,6 +39,8 @@ from src.config import (
     SERIAL_ENABLED, SERIAL_PORT, SERIAL_BAUDRATE, SERIAL_HEARTBEAT_INTERVAL,
     CAN_ENABLED, CAN_INTERFACE, CAN_CHANNEL,
     CAN_BAUDRATE, CAN_ARBITRATION_ID, CAN_SEND_INTERVAL,
+    CAN_FEEDBACK_ID, CAN_WATCHDOG_TIMEOUT,
+    HUD_ALERT_ECU_ENABLED,
 )
 from src.shared_state import SharedState
 from src.camera.capture import ThreadedCapture
@@ -91,14 +93,17 @@ def main():
         enabled=SERIAL_ENABLED,
     )
 
-    # ── 7. Khởi tạo CAN Bus Sender (Giao tiếp Ngoại vi Ô tô) ──
+    # ── 7. Khởi tạo CAN Bus Sender (Giao tiếp Ngoại vi Ô tô — Hai chiều) ──
     can_sender = CANSenderThread(
         interface=CAN_INTERFACE,
         channel=CAN_CHANNEL,
         can_id=CAN_ARBITRATION_ID,
+        feedback_id=CAN_FEEDBACK_ID,
         baudrate=CAN_BAUDRATE,
         send_interval=CAN_SEND_INTERVAL,
+        watchdog_timeout=CAN_WATCHDOG_TIMEOUT,
         enabled=CAN_ENABLED,
+        shared_state=state,
     )
 
     # ── 8. Start threads ──
@@ -174,6 +179,12 @@ def main():
             camera_fps = 1.0 / max(current_time - prev_time, 0.001)
             prev_time = current_time
 
+            # ── Đọc trạng thái ECU Alert từ SharedState (cho HUD overlay) ──
+            with state.lock:
+                alert_ecu_connected = state.alert_ecu_connected
+                alert_ecu_state     = state.alert_ecu_state
+                alert_ecu_hw_health = state.alert_ecu_hw_health
+
             # ── Render overlay + payload lên frame ──
             renderer.draw(
                 frame=frame,
@@ -185,6 +196,10 @@ def main():
                 camera_fps=camera_fps,
                 payload=payload,
                 face_detected=face_detected,
+                alert_ecu_connected=alert_ecu_connected,
+                alert_ecu_state=alert_ecu_state,
+                alert_ecu_hw_health=alert_ecu_hw_health,
+                hud_alert_ecu_enabled=HUD_ALERT_ECU_ENABLED,
             )
 
             cv2.imshow('DMS Pipeline v2 (Multi-Thread)', frame)
