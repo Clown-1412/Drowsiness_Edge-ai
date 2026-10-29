@@ -38,6 +38,11 @@ from src.shared_state import SharedState
 try:
     from rknnlite.api import RKNNLite
     RKNN_AVAILABLE = True
+    # Khôi phục logging nếu rknnlite làm biến dạng logging._nameToLevel
+    import logging
+    for name, lvl in {'CRITICAL': 50, 'ERROR': 40, 'WARNING': 30, 'INFO': 20, 'DEBUG': 10, 'NOTSET': 0}.items():
+        logging._nameToLevel[name] = lvl
+        logging._levelToName[lvl] = name
 except ImportError:
     RKNN_AVAILABLE = False
 
@@ -138,6 +143,7 @@ class InferenceEngine(threading.Thread):
         """Vòng lặp inference — chạy trên thread riêng."""
         print("🧠 Inference thread started")
         last_inference_time = time.time()
+        prev_tick_time = time.time()
 
         while not self._stopped:
             current_time = time.time()
@@ -148,19 +154,24 @@ class InferenceEngine(threading.Thread):
                 time.sleep(0.01)  # Sleep ngắn tránh busy-wait
                 continue
 
+            # Tính FPS suy luận thực tế (mỗi ~200ms = 5 FPS)
+            actual_fps = 1.0 / max(current_time - prev_tick_time, 0.001)
+            prev_tick_time = current_time
             last_inference_time = current_time
 
             # ── Đọc crops từ SharedState ──
             with self.shared_state.lock:
-                face     = self.shared_state.face_crop
-                eye      = self.shared_state.eye_crop
-                mouth    = self.shared_state.mouth_crop
-                mar      = self.shared_state.current_mar
-                detected = self.shared_state.face_detected
+                face      = self.shared_state.face_crop
+                eye       = self.shared_state.eye_crop
+                mouth     = self.shared_state.mouth_crop
+                mar       = self.shared_state.current_mar
+                detected  = self.shared_state.face_detected
                 last_yawn = self.shared_state.last_yawn_time
 
             # Bỏ qua nếu không có mặt
             if not detected or face is None or eye is None or mouth is None:
+                with self.shared_state.lock:
+                    self.shared_state.inference_fps = 0.0
                 continue
 
             # ── Tiền xử lý siêu nhẹ: chỉ resize ra uint8 NHWC (1, 224, 224, 3) ──
@@ -221,11 +232,13 @@ class InferenceEngine(threading.Thread):
                     self.shared_state.buffer_ready          = True
                     self.shared_state.label_text            = state.label_text
                     self.shared_state.label_color           = state.color
+                    self.shared_state.inference_fps         = actual_fps
 
             else:
-                # Chưa đủ buffer — chỉ cập nhật region weights
+                # Chưa đủ buffer — chỉ cập nhật region weights & inference_fps
                 with self.shared_state.lock:
                     self.shared_state.region_weights = region_weights
+                    self.shared_state.inference_fps  = actual_fps
 
     def stop(self):
         """Dừng thread và giải phóng tài nguyên NPU (nếu có)."""

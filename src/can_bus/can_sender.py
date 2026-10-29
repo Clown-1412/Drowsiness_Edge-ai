@@ -120,6 +120,9 @@ class CANSenderThread(threading.Thread):
         if not CAN_LIB_AVAILABLE:
             _safe_print("[CAN] Thu vien python-can chua duoc cai dat. CAN Bus bi vo hieu hoa.")
             self._bus = None
+            if self._shared_state is not None:
+                with self._shared_state.lock:
+                    self._shared_state.can_bus_ok = False
             return
 
         try:
@@ -132,9 +135,15 @@ class CANSenderThread(threading.Thread):
             self._bus = can.Bus(interface=self.interface, channel=self.channel, **kwargs)
             _safe_print(f"[CAN] Ket noi thanh cong toi {self.interface}:{self.channel} "
                         f"(TX=0x{self.can_id:X}, RX=0x{self.feedback_id:X})")
+            if self._shared_state is not None:
+                with self._shared_state.lock:
+                    self._shared_state.can_bus_ok = True
         except Exception as e:
             _safe_print(f"[CAN] Khong the mo ket noi {self.interface}:{self.channel}: {e}")
             self._bus = None
+            if self._shared_state is not None:
+                with self._shared_state.lock:
+                    self._shared_state.can_bus_ok = False
 
     def _try_reconnect(self) -> bool:
         """Thử kết nối lại nếu đã vượt qua khoảng cooldown."""
@@ -177,6 +186,11 @@ class CANSenderThread(threading.Thread):
 
             # Cập nhật trạng thái watchdog ECU Alert
             self._update_watchdog()
+
+            # Cập nhật trạng thái CAN Bus vào SharedState
+            if self._shared_state is not None:
+                with self._shared_state.lock:
+                    self._shared_state.can_bus_ok = self.is_connected
 
             # Giữ nhịp gửi định kỳ theo send_interval (5Hz)
             elapsed = time.time() - start_time
@@ -287,6 +301,9 @@ class CANSenderThread(threading.Thread):
             except Exception:
                 pass
             self._bus = None
+        if self._shared_state is not None:
+            with self._shared_state.lock:
+                self._shared_state.can_bus_ok = False
 
     def stop(self):
         """Dừng thread và đóng bus kết nối."""

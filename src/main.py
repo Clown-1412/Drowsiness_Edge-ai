@@ -189,8 +189,9 @@ def main():
             camera_fps = 1.0 / max(current_time - prev_time, 0.001)
             prev_time = current_time
 
-            # ── Đọc trạng thái ECU Alert từ SharedState (cho HUD overlay) ──
+            # ── Đọc trạng thái ECU Alert từ SharedState (cho HUD overlay) và lưu camera_fps ──
             with state.lock:
+                state.camera_fps    = camera_fps
                 alert_ecu_connected = state.alert_ecu_connected
                 alert_ecu_state     = state.alert_ecu_state
                 alert_ecu_hw_health = state.alert_ecu_hw_health
