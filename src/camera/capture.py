@@ -16,17 +16,11 @@ class ThreadedCapture:
     """
     Đọc frame liên tục từ VideoCapture trên thread riêng.
     Luôn giữ frame MỚI NHẤT, loại bỏ frame lag.
-
-    Tại sao cần tách thread:
-      Demo gốc gọi cap.read() trong vòng lặp chính → nếu AI inference
-      mất 100ms, frame tiếp theo đã cũ 100ms (stale). Thread riêng đọc
-      liên tục → main loop luôn nhận frame real-time.
     """
 
     def __init__(self, camera_index: int = 0,
                  width: int = 640, height: int = 480):
-        # Thử CAP_DSHOW trước (Windows), fallback mặc định (Linux/Jetson)
-        # Clone logic từ run_webcam_onnx.py L187-189
+        # Thử CAP_DSHOW trước (Windows), fallback mặc định (Linux / V4L2)
         if sys.platform == 'win32':
             self.cap = cv2.VideoCapture(camera_index, cv2.CAP_DSHOW)
             if not self.cap.isOpened():

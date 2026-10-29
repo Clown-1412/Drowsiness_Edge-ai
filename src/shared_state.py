@@ -44,6 +44,7 @@ class SharedState:
 
     # ── Hệ thống ──
     inference_fps: float = 0.0
+    camera_fps:    float = 0.0
 
     # ── ECU Alert Feedback (CAN 0x201 — từ ESP32 gửi về) ──
     alert_ecu_connected:  bool  = False   # True khi nhận được gói 0x201 trong khoảng watchdog
@@ -72,6 +73,7 @@ class SharedState:
                     'buffer_ready': self.buffer_ready,
                     'is_yawning': self.is_recently_yawning,
                     'inference_fps': self.inference_fps,
+                    'camera_fps': self.camera_fps,
                 },
                 'can_network': {
                     'rx_0x201': {
@@ -87,5 +89,6 @@ class SharedState:
                 },
                 'system_health': {
                     'ecu_alert_online': self.alert_ecu_connected,
+                    'camera_fps': self.camera_fps,
                 },
             }

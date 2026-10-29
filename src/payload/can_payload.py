@@ -1,8 +1,8 @@
 """
 CAN Payload — Đóng gói trạng thái DMS thành chuẩn CAN Bus 8-byte.
-Thay thế DMSPayload 1-byte cũ, phục vụ thống nhất cho cả Serial UART và CAN Bus.
+Giao tiếp chính thức duy nhất giữa Edge-AI (RK3588) và ECU Alert (ESP32).
 
-Cấu trúc frame CAN tiêu chuẩn 8-byte:
+Cấu trúc frame CAN tiêu chuẩn 8-byte (ID 0x200):
   - Byte 0: State ID [1:0] (0=ALERT, 1=DROWSY/YAWN, 2=MICROSLEEP, 3=INIT), [7:2]=0
   - Byte 1: Tracking Face [0] (0=No Face, 1=Face OK), [7:1]=0
   - Byte 2: Alert Level [1:0] (0=Normal, 1=Warning, 2=Critical), [7:2]=0
@@ -23,7 +23,7 @@ _ALERT_NAMES = {0: "NORMAL", 1: "WARNING", 2: "CRITICAL"}
 @dataclass
 class CANPayload:
     """
-    CAN Payload 8-byte thống nhất cho DMS.
+    CAN Payload 8-byte chuẩn cho DMS.
     """
     driver_state:   int     # 0=ALERT, 1=DROWSY/YAWN, 2=MICROSLEEP, 3=INIT
     face_detected:  bool    # True = Face OK, False = No Face
@@ -50,7 +50,7 @@ class CANPayload:
         return f"{self.to_bytes()[0]:08b}"
 
     def to_display_dict(self) -> Dict[str, Any]:
-        """Dict cho renderer hiển thị chi tiết trên OpenCV window."""
+        """Dict cho renderer hiển thị chi tiết trên HUD stream."""
         return {
             'state':        _STATE_NAMES.get(self.driver_state, "???"),
             'tracking':     _TRACKING_NAMES.get(bool(self.face_detected), "???"),

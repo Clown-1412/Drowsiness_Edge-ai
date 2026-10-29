@@ -1,7 +1,6 @@
 """
 Face Detection & Region Extraction — MediaPipe FaceLandmarker.
-Logic clone 100% từ run_webcam_onnx.py class FaceRegionExtractor (L88-161).
-Không thay đổi bất kỳ landmark index, pad value, hay công thức MAR nào.
+Trích xuất 3 vùng đặc trưng (Face, Eyes, Mouth) và tính toán MAR (Mouth Aspect Ratio).
 """
 import math
 import os
@@ -17,12 +16,10 @@ from mediapipe.tasks.python.vision import FaceLandmarker, FaceLandmarkerOptions
 class FaceRegionExtractor:
     """
     Phát hiện khuôn mặt và trích xuất 3 vùng: Face, Eyes, Mouth.
-    Tính toán MAR (Mouth Aspect Ratio).
-
-    CLONE 100% từ run_webcam_onnx.py — không thay đổi bất kỳ tham số nào.
+    Tính toán MAR (Mouth Aspect Ratio) và Bounding Box khuôn mặt.
     """
 
-    # ── Landmark indices — giữ nguyên từ demo gốc ──
+    # ── Landmark indices ──
     LEFT_EYE  = [33, 160, 158, 133, 153, 144]
     RIGHT_EYE = [362, 385, 387, 263, 373, 380]
     MOUTH     = [61, 291, 39, 181, 0, 17, 269, 405]
@@ -42,10 +39,9 @@ class FaceRegionExtractor:
         Args:
             landmark_path: Đường dẫn file face_landmarker.task
             landmark_url:  URL download nếu file chưa tồn tại
-            min_detection_confidence: Ngưỡng detection (giữ 0.5 như demo gốc)
-            min_tracking_confidence:  Ngưỡng tracking  (giữ 0.5 như demo gốc)
+            min_detection_confidence: Ngưỡng detection (mặc định 0.5)
+            min_tracking_confidence:  Ngưỡng tracking  (mặc định 0.5)
         """
-        # Auto-download nếu chưa có — clone từ demo gốc L53-58
         if not os.path.exists(landmark_path):
             print("⏳ Đang tải mô hình face_landmarker.task...")
             os.makedirs(os.path.dirname(landmark_path), exist_ok=True)
@@ -65,7 +61,6 @@ class FaceRegionExtractor:
                      indices: list, pad: float = 0.3) -> np.ndarray:
         """
         Crop vùng ảnh dựa trên landmark indices với padding.
-        Clone 100% từ demo gốc L111-119.
         """
         h, w = img.shape[:2]
         pts = [(int(landmarks[i].x * w), int(landmarks[i].y * h))
@@ -80,8 +75,6 @@ class FaceRegionExtractor:
     def _calc_mar(self, lms, w: int, h: int) -> float:
         """
         Mouth Aspect Ratio — đo độ mở miệng chuẩn hóa theo chiều rộng.
-        Clone 100% từ demo gốc L121-135.
-
         Công thức: MAR = (d_vert1 + d_vert2 + d_vert3) / (3.0 * d_horiz)
         """
         def dist(idx1: int, idx2: int) -> float:
@@ -120,7 +113,7 @@ class FaceRegionExtractor:
 
         mar = self._calc_mar(lms, w, h)
 
-        # Crop face — giữ nguyên padding 20px từ demo gốc
+        # Crop face với padding 20px
         xs = [lm.x * w for lm in lms]
         ys = [lm.y * h for lm in lms]
         x1 = max(0, int(min(xs)) - 20)
@@ -130,7 +123,7 @@ class FaceRegionExtractor:
         face = img_rgb[y1:y2, x1:x2] if (y2 > y1 and x2 > x1) else img_rgb
         face_bbox = (x1, y1, x2, y2)
 
-        # Crop eyes & mouth — giữ nguyên pad values từ demo gốc
+        # Crop eyes & mouth
         eyes  = self._crop_region(img_rgb, lms,
                                   self.LEFT_EYE + self.RIGHT_EYE, pad=0.15)
         mouth = self._crop_region(img_rgb, lms, self.MOUTH, pad=0.2)

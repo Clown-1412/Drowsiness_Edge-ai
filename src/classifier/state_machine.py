@@ -1,6 +1,5 @@
 """
 Logic phân loại 3 cấp độ trạng thái tài xế + EMA smoothing.
-Clone 100% từ run_webcam_onnx.py (L249-271).
 
 Yawn timer (last_yawn_time) được quản lý bên ngoài (main thread cập nhật
 mỗi frame qua SharedState), class này chỉ nhận is_recently_yawning làm input.
@@ -15,20 +14,18 @@ class DriverState:
     level_id: int                        # 0=Ngủ gật, 1=Tỉnh táo, 2=Buồn ngủ/Ngáp
     smoothed_drowsy_prob: float
     label_text: str
-    color: Tuple[int, int, int]          # BGR color cho OpenCV
+    color: Tuple[int, int, int]          # BGR color cho frame overlay
 
 
 class DriverStateMachine:
     """
-    EMA smoothing + Phân loại 3 Level.
-    CLONE 100% logic từ run_webcam_onnx.py — không thay đổi tham số.
+    EMA smoothing + Phân loại 3 Level (Tỉnh táo / Buồn ngủ / Ngủ gật).
 
     Tham số:
-        drowsy_threshold: 0.55 (demo gốc)
-        mar_threshold:    0.50 (demo gốc)
-        alpha:            0.65 (demo gốc)
-        yawn_cooldown_sec: 3.0 (demo gốc) — dùng để tham chiếu, nhưng
-                          is_recently_yawning được tính bên ngoài.
+        drowsy_threshold: Ngưỡng kích hoạt Drowsy (0.65)
+        mar_threshold:    Ngưỡng ngáp MAR (0.70)
+        alpha:            Hệ số EMA smoothing (0.65)
+        yawn_cooldown_sec: Thời gian giữ trạng thái sau khi ngáp (4.0s)
     """
 
     def __init__(self, drowsy_threshold: float, mar_threshold: float,
@@ -51,24 +48,14 @@ class DriverStateMachine:
 
         Returns:
             DriverState với level, probability, label và color
-
-        Logic clone 100% từ run_webcam_onnx.py L249-271:
-            smoothed = ALPHA * raw + (1 - ALPHA) * smoothed
-            if smoothed >= 0.55:
-                if mar >= 0.50 or is_recently_yawning:
-                    → Level 2: BUỒN NGỦ (cam)
-                else:
-                    → Level 0: NGỦ GẬT (đỏ)
-            else:
-                → Level 1: TỈNH TÁO (xanh)
         """
-        # ── EMA smoothing — giống hệt demo gốc L250 ──
+        # ── EMA smoothing ──
         self.smoothed_drowsy_prob = (
             self.alpha * raw_drowsy_prob
             + (1.0 - self.alpha) * self.smoothed_drowsy_prob
         )
 
-        # ── Phân loại 3 Levels — đồng bộ 100% với demo gốc L255-271 ──
+        # ── Phân loại 3 Levels ──
         if self.smoothed_drowsy_prob >= self.drowsy_threshold:
             if current_mar >= self.mar_threshold or is_recently_yawning:
                 # Đang ngáp HOẶC vừa ngáp xong đang chờ Model xả bộ đệm

@@ -1,23 +1,19 @@
 """
 Cấu hình tập trung cho DMS Pipeline.
 Tất cả hằng số, ngưỡng, đường dẫn được định nghĩa tại đây.
-Giá trị giữ nguyên 100% so với demo gốc (run_webcam_onnx.py).
+Chạy thuần RKNN NPU trên RK3588, giao tiếp CAN Bus và Dashboard Bridge.
 """
-import os
 import sys
 from pathlib import Path
 
-import numpy as np
-
 # ──────────────────────────────────────────────────────────────────────────────
-# Đường dẫn Project
+# Đường dẫn Project & Mô hình RKNN
 # ──────────────────────────────────────────────────────────────────────────────
 PROJECT_ROOT = Path(__file__).resolve().parent.parent   # d:\Python_pj\Drowsiness_Edge-ai
 MODEL_DIR    = PROJECT_ROOT / 'models'
 
-EXTRACTOR_ONNX = str(MODEL_DIR / 'dms_feature_extractor.onnx')
-EXTRACTOR_RKNN = str(MODEL_DIR / 'dms_feature_extractor.rknn')
-CLASSIFIER_ONNX = str(MODEL_DIR / 'dms_tcn_classifier.onnx')
+EXTRACTOR_RKNN  = str(MODEL_DIR / 'dms_feature_extractor.rknn')
+CLASSIFIER_RKNN = str(MODEL_DIR / 'dms_tcn_classifier.rknn')
 LANDMARK_TASK   = str(MODEL_DIR / 'face_landmarker.task')
 LANDMARK_URL    = (
     'https://storage.googleapis.com/mediapipe-models/'
@@ -25,7 +21,7 @@ LANDMARK_URL    = (
 )
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Tham số Model — KHÔNG ĐƯỢC THAY ĐỔI (đồng bộ 100% với run_webcam_onnx.py)
+# Tham số Model
 # ──────────────────────────────────────────────────────────────────────────────
 SEQ_LEN         = 16            # Số frame cho TCN sequence
 IMG_SIZE        = 224           # Kích thước ảnh input CNN
@@ -33,7 +29,7 @@ TARGET_FPS      = 5             # Tần suất inference (5 lần/giây)
 SAMPLE_INTERVAL = 1.0 / TARGET_FPS   # 0.2 s / sample
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Ngưỡng phân loại — đồng bộ 100% với run_webcam_onnx.py
+# Ngưỡng phân loại trạng thái tài xế
 # ──────────────────────────────────────────────────────────────────────────────
 DROWSY_THRESHOLD  = 0.65        # Ngưỡng kích hoạt Drowsy
 MAR_THRESHOLD     = 0.70        # Ngưỡng ngáp: MAR >= 0.70
@@ -48,24 +44,10 @@ CAMERA_WIDTH  = 640
 CAMERA_HEIGHT = 480
 
 # ──────────────────────────────────────────────────────────────────────────────
-# MediaPipe
+# MediaPipe Face Landmark
 # ──────────────────────────────────────────────────────────────────────────────
 MIN_FACE_DETECTION_CONFIDENCE = 0.5
 MIN_TRACKING_CONFIDENCE       = 0.5
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Preprocessing — ImageNet normalization
-# ──────────────────────────────────────────────────────────────────────────────
-IMAGENET_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
-IMAGENET_STD  = np.array([0.229, 0.224, 0.225], dtype=np.float32)
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Cấu hình Serial / Debug ESP32
-# ──────────────────────────────────────────────────────────────────────────────
-SERIAL_ENABLED            = False        # Bật/tắt truyền Serial (False khi test không phần cứng)
-SERIAL_PORT               = 'COM1'      # Cổng Serial ESP32 (Linux: '/dev/ttyUSB0')
-SERIAL_BAUDRATE           = 115200      # Tốc độ baud (khớp DEBUG_SERIAL_BAUD trên ESP32)
-SERIAL_HEARTBEAT_INTERVAL = 3.0         # Chu kỳ heartbeat lặp lại (giây)
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Cấu hình CAN Bus (RK3588 Native SocketCAN can0 / PC dev test)
@@ -80,10 +62,10 @@ CAN_FEEDBACK_ID    = 0x201          # CAN message ID phản hồi từ ECU Alert
 CAN_WATCHDOG_TIMEOUT = 1.5          # Thời gian tối đa (giây) chờ phản hồi trước khi coi ECU Alert offline
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Cấu hình Hiển thị (HUD Overlay & Face Bounding Box)
+# Cấu hình Hiển thị (Vẽ lên Video Frame phục vụ Dashboard Stream)
 # ──────────────────────────────────────────────────────────────────────────────
-HUD_OVERLAY_ENABLED   = False        # Bật/tắt toàn bộ bảng HUD Overlay dưới đáy màn hình
-FACE_BBOX_ENABLED     = True        # Bật/tắt Bounding Box tracking khuôn mặt kèm nhãn trạng thái
+HUD_OVERLAY_ENABLED   = False        # Bật/tắt bảng HUD Overlay thông số trên video stream
+FACE_BBOX_ENABLED     = True         # Bật/tắt Bounding Box tracking khuôn mặt kèm nhãn trạng thái
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Cấu hình Dashboard Bridge (Streaming Video & Telemetry lên Web Dashboard)
@@ -95,22 +77,3 @@ STREAM_TARGET_FPS    = 20             # FPS tối đa cho video stream (20 FPS, 
 STREAM_JPEG_QUALITY  = 70             # Chất lượng nén JPEG (0–100, 70 = cân bằng chất lượng/dung lượng)
 SHM_VIDEO_NAME       = 'dms_video_shm'  # Tên POSIX Shared Memory cho video frames
 TELEMETRY_PUSH_HZ    = 10             # Tần suất đẩy telemetry JSON (Hz)
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Hàm hỗ trợ
-# ──────────────────────────────────────────────────────────────────────────────
-def setup_cuda_dlls():
-    """
-    Tự động nạp DLL CUDA trên Windows (ONNX Runtime CUDA EP).
-    Clone từ run_webcam_onnx.py L18-24.
-    Phải gọi TRƯỚC khi import onnxruntime.
-    """
-    if sys.platform == 'win32':
-        site_packages = os.path.join(sys.prefix, 'Lib', 'site-packages')
-        for sub in ['nvidia/cublas/bin', 'nvidia/cudnn/bin',
-                     'nvidia/cuda_runtime/bin']:
-            dll_path = os.path.join(site_packages, sub.replace('/', os.sep))
-            if os.path.exists(dll_path):
-                os.add_dll_directory(dll_path)
-                os.environ['PATH'] = dll_path + os.pathsep + os.environ['PATH']
