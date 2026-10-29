@@ -22,7 +22,7 @@ if sys.platform == 'win32':
     except Exception:
         pass
 
-# Đảm bảo project root luôn có trong sys.path để hỗ trợ cả 2 cách chạy:
+# Đảm bảo project root luôn có trong sys.path:
 # 1. python src/main.py
 # 2. python -m src.main
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -40,7 +40,8 @@ from src.config import (
     CAN_ENABLED, CAN_INTERFACE, CAN_CHANNEL,
     CAN_BAUDRATE, CAN_ARBITRATION_ID, CAN_SEND_INTERVAL,
     CAN_FEEDBACK_ID, CAN_WATCHDOG_TIMEOUT,
-    HUD_ALERT_ECU_ENABLED,
+    HUD_OVERLAY_ENABLED, FACE_BBOX_ENABLED,
+    BRIDGE_ENABLED, BRIDGE_HOST, BRIDGE_PORT, SHM_VIDEO_NAME,
 )
 from src.shared_state import SharedState
 from src.camera.capture import ThreadedCapture
@@ -50,25 +51,25 @@ from src.payload.can_payload import build_can_payload
 from src.can_bus.can_sender import CANSenderThread
 from src.debug.serial_debugger import SerialDebugger
 from src.display.renderer import Renderer
+from src.bridge.ipc_manager import IPCManager
 
 
 def main():
     """Điều phối toàn bộ pipeline DMS."""
 
     print("=" * 60)
-    print("  DMS Pipeline v2 — Multi-Thread Architecture")
-    print("  Giữ nguyên 100% logic dự đoán từ demo gốc")
+    print("  DMS Pipeline — Multi-Thread Architecture")
     print("=" * 60)
 
     # ── 1. Khởi tạo SharedState ──
     state = SharedState()
 
     # ── 2. Khởi tạo Camera Thread ──
-    print(f"📷 Đang kết nối camera (index {CAMERA_INDEX})...")
+    print(f"Đang kết nối camera (index {CAMERA_INDEX})...")
     camera = ThreadedCapture(CAMERA_INDEX, CAMERA_WIDTH, CAMERA_HEIGHT)
 
     # ── 3. Khởi tạo Face Extractor (MediaPipe — chạy trên main thread) ──
-    print("🔍 Khởi tạo MediaPipe FaceLandmarker...")
+    print("Khởi tạo MediaPipe FaceLandmarker...")
     face_extractor = FaceRegionExtractor(
         landmark_path=LANDMARK_TASK,
         landmark_url=LANDMARK_URL,
@@ -106,12 +107,22 @@ def main():
         shared_state=state,
     )
 
+    # ── 7b. Khởi tạo Bridge (Process 2: Web Server) ──
+    ipc_manager = None
+    if BRIDGE_ENABLED:
+        print(f"Khởi tạo Bridge (SharedMemory + Server Process trên cổng {BRIDGE_PORT})...")
+        ipc_manager = IPCManager(
+            shm_name=SHM_VIDEO_NAME,
+            frame_shape=(CAMERA_HEIGHT, CAMERA_WIDTH, 3),
+        )
+        ipc_manager.start_server_process(host=BRIDGE_HOST, port=BRIDGE_PORT)
+
     # ── 8. Start threads ──
     camera.start()
     inference.start()
     can_sender.start()
 
-    print("\n✅ Tất cả threads đã khởi động")
+    print("\nTất cả threads đã khởi động")
     print("   Nhấn 'q' để thoát\n")
 
     prev_time = time.time()
@@ -128,10 +139,10 @@ def main():
 
             # ══════════════════════════════════════════════════════════
             # Detection: MediaPipe (chạy trên main thread vì không
-            # thread-safe). Logic giống demo gốc L215-216.
+            # thread-safe).
             # ══════════════════════════════════════════════════════════
             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            face_crop, eye_crop, mouth_crop, mar = face_extractor.extract(
+            face_crop, eye_crop, mouth_crop, mar, face_bbox = face_extractor.extract(
                 frame_rgb
             )
 
@@ -139,7 +150,7 @@ def main():
 
             # ══════════════════════════════════════════════════════════
             # Cập nhật SharedState cho Inference Thread.
-            # Yawn timer cập nhật MỌI frame — giống demo gốc L221-223.
+            # Yawn timer cập nhật MỌI frame.
             # ══════════════════════════════════════════════════════════
             with state.lock:
                 state.face_crop     = face_crop
@@ -150,7 +161,6 @@ def main():
                 if face_detected:
                     state.current_mar = mar
                     # Cập nhật yawn timer ở MỌI frame khi miệng mở
-                    # Clone 100% từ demo gốc L222-223
                     if mar >= MAR_THRESHOLD:
                         state.last_yawn_time = current_time
 
@@ -185,7 +195,7 @@ def main():
                 alert_ecu_state     = state.alert_ecu_state
                 alert_ecu_hw_health = state.alert_ecu_hw_health
 
-            # ── Render overlay + payload lên frame ──
+            # ── Render Bounding Box + HUD Overlay lên frame ──
             renderer.draw(
                 frame=frame,
                 label_text=label_text,
@@ -199,23 +209,32 @@ def main():
                 alert_ecu_connected=alert_ecu_connected,
                 alert_ecu_state=alert_ecu_state,
                 alert_ecu_hw_health=alert_ecu_hw_health,
-                hud_alert_ecu_enabled=HUD_ALERT_ECU_ENABLED,
+                hud_overlay_enabled=HUD_OVERLAY_ENABLED,
+                face_bbox_enabled=FACE_BBOX_ENABLED,
+                face_bbox=face_bbox,
             )
+
+            # ── Đẩy video frame & telemetry sang Dashboard Bridge (non-blocking) ──
+            if ipc_manager is not None:
+                ipc_manager.write_video_frame(frame)
+                ipc_manager.post_telemetry(state.get_telemetry_snapshot())
 
             cv2.imshow('DMS Pipeline v2 (Multi-Thread)', frame)
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
 
     except KeyboardInterrupt:
-        print("\n⏹️  Dừng bởi người dùng")
+        print("\nDừng bởi người dùng")
     finally:
-        print("🧹 Đang dọn dẹp...")
+        print("Đang dọn dẹp...")
+        if ipc_manager is not None:
+            ipc_manager.cleanup()
         camera.stop()
         debugger.close()
         can_sender.stop()
         inference.stop()
         cv2.destroyAllWindows()
-        print("✅ Đã thoát sạch")
+        print("Đã thoát sạch")
 
 
 if __name__ == '__main__':

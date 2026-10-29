@@ -120,7 +120,8 @@ class InferenceEngine(threading.Thread):
             self.session_extractor = ort.InferenceSession(
                 EXTRACTOR_ONNX, providers=ext_providers
             )
-            print(f"🚀 Feature Extractor: ONNX ({ext_providers[0]})")
+            active_provider = self.session_extractor.get_providers()[0]
+            print(f"🚀 Feature Extractor: ONNX ({active_provider})")
 
         # ── TCN Classifier: luôn ONNX CPU ──
         if not os.path.exists(CLASSIFIER_ONNX):

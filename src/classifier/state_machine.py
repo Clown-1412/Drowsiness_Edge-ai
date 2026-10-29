@@ -77,8 +77,7 @@ class DriverStateMachine:
                     smoothed_drowsy_prob=self.smoothed_drowsy_prob,
                     label_text=(
                         f"LEVEL 2: BUON NGU "
-                        f"({self.smoothed_drowsy_prob * 100:.1f}% "
-                        f"| MAR: {current_mar:.2f})"
+                        f"({self.smoothed_drowsy_prob * 100:.1f}%)"
                     ),
                     color=(0, 165, 255),   # Cam
                 )

@@ -100,20 +100,20 @@ class FaceRegionExtractor:
 
     def extract(self, img_rgb: np.ndarray) -> Tuple[
         Optional[np.ndarray], Optional[np.ndarray],
-        Optional[np.ndarray], float
+        Optional[np.ndarray], float,
+        Optional[Tuple[int, int, int, int]]
     ]:
         """
-        Trả về: (face_crop, eye_crop, mouth_crop, mar)
-        Nếu không phát hiện mặt: (None, None, None, 0.0)
-
-        Clone 100% từ demo gốc L137-161.
+        Trả về: (face_crop, eye_crop, mouth_crop, mar, face_bbox)
+        Nếu không phát hiện mặt: (None, None, None, 0.0, None)
+        face_bbox dạng (x1, y1, x2, y2) theo tọa độ pixel của frame.
         """
         mp_image = mp_lib.Image(
             image_format=mp_lib.ImageFormat.SRGB, data=img_rgb
         )
         results = self.detector.detect(mp_image)
         if not results.face_landmarks:
-            return None, None, None, 0.0
+            return None, None, None, 0.0, None
 
         lms = results.face_landmarks[0]
         h, w = img_rgb.shape[:2]
@@ -128,10 +128,11 @@ class FaceRegionExtractor:
         y1 = max(0, int(min(ys)) - 20)
         y2 = min(h, int(max(ys)) + 20)
         face = img_rgb[y1:y2, x1:x2] if (y2 > y1 and x2 > x1) else img_rgb
+        face_bbox = (x1, y1, x2, y2)
 
         # Crop eyes & mouth — giữ nguyên pad values từ demo gốc
         eyes  = self._crop_region(img_rgb, lms,
                                   self.LEFT_EYE + self.RIGHT_EYE, pad=0.15)
         mouth = self._crop_region(img_rgb, lms, self.MOUTH, pad=0.2)
 
-        return face, eyes, mouth, mar
+        return face, eyes, mouth, mar, face_bbox

@@ -11,7 +11,7 @@ Phiên bản 2.0: Hỗ trợ giao tiếp 2 chiều (Bidirectional CAN)
   - Tách biệt hoàn toàn khỏi Main Thread và Inference Thread (daemon thread).
   - Sử dụng collections.deque(maxlen=1) làm buffer truyền (non-blocking, latest-value-wins).
   - Định kỳ phát tín hiệu (cyclic transmission) theo chu kỳ send_interval.
-  - Tự động quản lý và tăng Alive Counter (0–15 rolling counter).
+  - Tự động quản lý và tăng Alive Counter (0 to 15 rolling counter).
   - Tự phục hồi (reconnect cooldown) khi đứt kết nối hoặc bus-off mà không làm crash app.
 """
 import sys

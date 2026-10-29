@@ -62,7 +62,7 @@ IMAGENET_STD  = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 # ──────────────────────────────────────────────────────────────────────────────
 # Cấu hình Serial / Debug ESP32
 # ──────────────────────────────────────────────────────────────────────────────
-SERIAL_ENABLED            = True        # Bật/tắt truyền Serial (False khi test không phần cứng)
+SERIAL_ENABLED            = False        # Bật/tắt truyền Serial (False khi test không phần cứng)
 SERIAL_PORT               = 'COM1'      # Cổng Serial ESP32 (Linux: '/dev/ttyUSB0')
 SERIAL_BAUDRATE           = 115200      # Tốc độ baud (khớp DEBUG_SERIAL_BAUD trên ESP32)
 SERIAL_HEARTBEAT_INTERVAL = 3.0         # Chu kỳ heartbeat lặp lại (giây)
@@ -70,7 +70,7 @@ SERIAL_HEARTBEAT_INTERVAL = 3.0         # Chu kỳ heartbeat lặp lại (giây)
 # ──────────────────────────────────────────────────────────────────────────────
 # Cấu hình CAN Bus (RK3588 Native SocketCAN can0 / PC dev test)
 # ──────────────────────────────────────────────────────────────────────────────
-CAN_ENABLED        = False          # Bật/tắt CAN Bus (False khi test không phần cứng)
+CAN_ENABLED        = False           # Bật/tắt CAN Bus (True khi chạy với phần cứng CAN)
 CAN_INTERFACE      = 'socketcan' if sys.platform.startswith('linux') else 'virtual'
 CAN_CHANNEL        = 'can0' if sys.platform.startswith('linux') else 'vcan0'
 CAN_BAUDRATE       = 500000         # CAN bus baudrate (500 kbps)
@@ -80,9 +80,21 @@ CAN_FEEDBACK_ID    = 0x201          # CAN message ID phản hồi từ ECU Alert
 CAN_WATCHDOG_TIMEOUT = 1.5          # Thời gian tối đa (giây) chờ phản hồi trước khi coi ECU Alert offline
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Cấu hình HUD Overlay (Hiển thị trạng thái ECU Alert trên OpenCV)
+# Cấu hình Hiển thị (HUD Overlay & Face Bounding Box)
 # ──────────────────────────────────────────────────────────────────────────────
-HUD_ALERT_ECU_ENABLED = True        # Bật/tắt hiển thị trạng thái ECU Alert trên OpenCV debug window
+HUD_OVERLAY_ENABLED   = False        # Bật/tắt toàn bộ bảng HUD Overlay dưới đáy màn hình
+FACE_BBOX_ENABLED     = True        # Bật/tắt Bounding Box tracking khuôn mặt kèm nhãn trạng thái
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Cấu hình Dashboard Bridge (Streaming Video & Telemetry lên Web Dashboard)
+# ──────────────────────────────────────────────────────────────────────────────
+BRIDGE_ENABLED       = True           # Bật/tắt Dashboard Bridge (False = không khởi động server)
+BRIDGE_HOST          = '0.0.0.0'      # Bind address (0.0.0.0 = mọi interface mạng)
+BRIDGE_PORT          = 8000           # Port FastAPI server
+STREAM_TARGET_FPS    = 20             # FPS tối đa cho video stream (20 FPS, tiết kiệm CPU)
+STREAM_JPEG_QUALITY  = 70             # Chất lượng nén JPEG (0–100, 70 = cân bằng chất lượng/dung lượng)
+SHM_VIDEO_NAME       = 'dms_video_shm'  # Tên POSIX Shared Memory cho video frames
+TELEMETRY_PUSH_HZ    = 10             # Tần suất đẩy telemetry JSON (Hz)
 
 
 # ──────────────────────────────────────────────────────────────────────────────

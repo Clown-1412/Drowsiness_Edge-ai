@@ -1,8 +1,9 @@
 """
 SharedState — Đối tượng giao tiếp giữa các thread.
-Sử dụng threading.Lock đơn giản cho prototype PC.
+Sử dụng threading.Lock đơn giản.
 """
 import threading
+import time
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
 
@@ -50,3 +51,41 @@ class SharedState:
     alert_ecu_hw_health:  int   = 0x07    # Bitfield sức khỏe phần cứng (bit0=SD, bit1=I2S, bit2=Buzzer)
     alert_ecu_error_code: int   = 0       # Mã lỗi chi tiết từ ESP32
     last_feedback_time:   float = 0.0     # time.time() lần cuối nhận gói 0x201
+
+    def get_telemetry_snapshot(self) -> dict:
+        """
+        Sao chép nhanh toàn bộ telemetry + CAN + status vào dict thuần Python.
+        Acquire lock cực ngắn (< 50µs) — chỉ copy primitive types, không copy numpy arrays.
+        Bridge Worker gọi hàm này, KHÔNG trực tiếp đọc các field.
+        """
+        with self.lock:
+            return {
+                'timestamp': time.time(),
+                'telemetry': {
+                    'drowsy_prob': self.smoothed_drowsy_prob,
+                    'raw_drowsy_prob': self.raw_drowsy_prob,
+                    'mar': self.current_mar,
+                    'region_weights': list(self.region_weights),
+                    'level_id': self.level_id,
+                    'level_label': self.label_text,
+                    'face_detected': self.face_detected,
+                    'buffer_ready': self.buffer_ready,
+                    'is_yawning': self.is_recently_yawning,
+                    'inference_fps': self.inference_fps,
+                },
+                'can_network': {
+                    'rx_0x201': {
+                        'connected': self.alert_ecu_connected,
+                        'executing_state': self.alert_ecu_state,
+                        'hw_health': {
+                            'sd_card': bool(self.alert_ecu_hw_health & 0x01),
+                            'i2s_dac': bool(self.alert_ecu_hw_health & 0x02),
+                            'buzzer': bool(self.alert_ecu_hw_health & 0x04),
+                        },
+                        'error_code': self.alert_ecu_error_code,
+                    },
+                },
+                'system_health': {
+                    'ecu_alert_online': self.alert_ecu_connected,
+                },
+            }

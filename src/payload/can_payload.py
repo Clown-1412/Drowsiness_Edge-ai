@@ -6,9 +6,9 @@ Cấu trúc frame CAN tiêu chuẩn 8-byte:
   - Byte 0: State ID [1:0] (0=ALERT, 1=DROWSY/YAWN, 2=MICROSLEEP, 3=INIT), [7:2]=0
   - Byte 1: Tracking Face [0] (0=No Face, 1=Face OK), [7:1]=0
   - Byte 2: Alert Level [1:0] (0=Normal, 1=Warning, 2=Critical), [7:2]=0
-  - Byte 3: Alive Counter [3:0] (rolling counter 0–15), [7:4]=0
+  - Byte 3: Alive Counter [3:0] (rolling counter 0 to 15), [7:4]=0
   - Byte 4: System Status: [0]=buffer_ready, [1]=can_bus_ok, [7:2]=0
-  - Byte 5–7: Reserved (0x00) cho mở rộng tương lai (E2E CRC-8, MAR, HUD)
+  - Byte 5 to 7: Reserved (0x00) cho mở rộng tương lai (E2E CRC-8, MAR, HUD)
 """
 from dataclasses import dataclass
 from typing import Dict, Any
