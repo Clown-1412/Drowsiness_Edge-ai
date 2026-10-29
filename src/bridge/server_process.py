@@ -11,20 +11,37 @@ Endpoints:
   GET /video/live      → MJPEG stream (multipart/x-mixed-replace)
   GET /health          → JSON {"status": "ok", "stream_fps": 20, "port": 8000}
   GET /api/telemetry   → JSON telemetry snapshot mới nhất
-
-Giao tiếp với Core DMS:
-  - Video frame: đọc từ SharedMemory (zero-copy, attach by name).
-  - Telemetry: nhận qua multiprocessing.Queue (non-blocking get).
-  - Command: gửi qua multiprocessing.Queue (VD: reset, set_threshold).
+  WS  /ws/telemetry    → WebSocket stream JSON telemetry @ 10Hz
 """
 import sys
+import logging
 
 # ── Fix stdout UTF-8 trên Windows ────────────────────────────────────────
-# Windows mặc định dùng cp1252 → print tiếng Việt / emoji sẽ crash.
-# Reconfigure stdout sang UTF-8 ngay đầu file, TRƯỚC mọi print().
 if sys.platform == 'win32':
-    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
-    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+    try:
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
+
+
+def _restore_standard_logging():
+    """
+    Khắc phục bug của rknnlite làm biến dạng logging._nameToLevel trong Python.
+    Đảm bảo uvicorn và standard logging không bị lỗi 'Unknown level: INFO'.
+    """
+    standard_levels = {
+        'CRITICAL': logging.CRITICAL,
+        'ERROR': logging.ERROR,
+        'WARNING': logging.WARNING,
+        'INFO': logging.INFO,
+        'DEBUG': logging.DEBUG,
+        'NOTSET': logging.NOTSET,
+    }
+    for name, level in standard_levels.items():
+        logging._nameToLevel[name] = level
+        logging._levelToName[level] = name
+
 
 from typing import Tuple
 
@@ -49,19 +66,9 @@ def run_dashboard_server(
 ) -> None:
     """
     Entry-point cho Dashboard Server — chạy trên Process 2.
-
-    Hàm này là target của multiprocessing.Process, được gọi bởi
-    IPCManager.start_server_process(). Nó tạo FastAPI app, attach
-    vào SharedMemory đã tạo bởi Process 1, và phục vụ HTTP.
-
-    Args:
-        shm_name: Tên SharedMemory để attach (VD: 'dms_video_shm').
-        frame_shape: Shape frame BGR (VD: (480, 640, 3)).
-        telemetry_queue: Queue nhận telemetry snapshot từ Core DMS.
-        command_queue: Queue gửi lệnh ngược về Core DMS.
-        host: Bind address (VD: '0.0.0.0').
-        port: Port HTTP server (VD: 8000).
     """
+    # Khôi phục logging chuẩn ngay khi Process 2 vừa khởi động
+    _restore_standard_logging()
 
     # ── Attach vào SharedMemory (reader mode — KHÔNG tạo mới) ────────
     video_shm = VideoSharedMemory(
@@ -69,8 +76,6 @@ def run_dashboard_server(
     )
 
     # ── Cache telemetry mới nhất ─────────────────────────────────────
-    # Giữ bản cache để trả về khi client poll mà queue rỗng.
-    # Dict mutable → cập nhật tại chỗ, không cần biến global.
     _telemetry_cache = {"state": "Initializing", "timestamp": 0.0}
 
     # ══════════════════════════════════════════════════════════════════
@@ -83,8 +88,6 @@ def run_dashboard_server(
     )
 
     # ── CORS Middleware — cho phép mọi origin (truy cập LAN) ─────────
-    # Dashboard chạy trên trình duyệt máy khác trong mạng LAN
-    # → cần allow all origins để không bị CORS block.
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],         # Cho phép mọi origin (LAN access)
@@ -106,13 +109,7 @@ def run_dashboard_server(
 
     @app.get("/video/live")
     async def video_live():
-        """
-        MJPEG video stream — multipart/x-mixed-replace.
-
-        Trình duyệt hiển thị video liên tục khi truy cập URL này.
-        JPEG chỉ được encode khi có client kết nối (on-demand).
-        Khi client đóng tab → generator thoát → CPU encoding = 0%.
-        """
+        """MJPEG video stream — multipart/x-mixed-replace."""
         return StreamingResponse(
             generate_mjpeg_stream(
                 video_shm=video_shm,
@@ -124,12 +121,7 @@ def run_dashboard_server(
 
     @app.get("/health")
     async def health_check():
-        """
-        Health check endpoint — kiểm tra server hoạt động.
-
-        Returns:
-            JSON với status, stream FPS cấu hình, và port hiện tại.
-        """
+        """Health check endpoint — kiểm tra server hoạt động."""
         return JSONResponse(content={
             "status": "ok",
             "stream_fps": 20,
@@ -138,32 +130,18 @@ def run_dashboard_server(
 
     @app.get("/api/telemetry")
     async def get_telemetry():
-        """
-        Trả về telemetry snapshot mới nhất từ Core DMS.
-
-        Cơ chế:
-          1. Thử get_nowait() từ telemetry_queue.
-          2. Nếu có data mới → cập nhật cache → trả về.
-          3. Nếu queue rỗng → trả về bản cache cũ.
-
-        Dashboard poll endpoint này theo chu kỳ (VD: mỗi 100ms)
-        để hiển thị trạng thái real-time.
-        """
+        """Trả về telemetry snapshot mới nhất từ Core DMS."""
         try:
-            # Non-blocking get — lấy snapshot mới nhất nếu có
             snapshot = telemetry_queue.get_nowait()
             _telemetry_cache.update(snapshot)
         except Exception:
-            pass  # Queue rỗng → giữ nguyên cache
+            pass
 
         return JSONResponse(content=_telemetry_cache)
 
     @app.websocket("/ws/telemetry")
     async def websocket_telemetry(websocket: WebSocket):
-        """
-        WebSocket endpoint — stream JSON telemetry snapshot ở tần số 10Hz (mỗi 100ms)
-        trực tiếp tới Web Dashboard.
-        """
+        """WebSocket endpoint — stream JSON telemetry snapshot ở tần số 10Hz."""
         await websocket.accept()
         try:
             while True:
@@ -179,12 +157,12 @@ def run_dashboard_server(
             pass
 
     # ══════════════════════════════════════════════════════════════════
-    # Khởi động Uvicorn (blocking — chạy cho đến khi process bị kill)
+    # Khởi động Uvicorn
     # ══════════════════════════════════════════════════════════════════
     print(f"[Server] Starting Dashboard Server on http://{host}:{port}")
     uvicorn.run(
         app,
         host=host,
         port=port,
-        log_level='warning',     # Chỉ log warning/error, giảm noise
+        log_config=None,  # Bỏ qua dictConfig để tránh lỗi xung đột logging của rknnlite
     )
