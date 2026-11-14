@@ -25,7 +25,7 @@ LANDMARK_URL    = (
 )
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Tham số Model — KHÔNG ĐƯỢC THAY ĐỔI (đồng bộ 100% với run_webcam_onnx.py)
+# Tham số Model — KHÔNG ĐƯỢC THAY ĐỔI
 # ──────────────────────────────────────────────────────────────────────────────
 SEQ_LEN         = 16            # Số frame cho TCN sequence
 IMG_SIZE        = 224           # Kích thước ảnh input CNN
@@ -33,11 +33,11 @@ TARGET_FPS      = 5             # Tần suất inference (5 lần/giây)
 SAMPLE_INTERVAL = 1.0 / TARGET_FPS   # 0.2 s / sample
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Ngưỡng phân loại — đồng bộ 100% với run_webcam_onnx.py
+# Ngưỡng phân loại
 # ──────────────────────────────────────────────────────────────────────────────
-DROWSY_THRESHOLD  = 0.65        # Ngưỡng kích hoạt Drowsy
+DROWSY_THRESHOLD  = 0.55        # Ngưỡng kích hoạt Drowsy
 MAR_THRESHOLD     = 0.70        # Ngưỡng ngáp: MAR >= 0.70
-ALPHA             = 0.65        # Hệ số EMA smoothing
+ALPHA             = 0.60        # Hệ số EMA smoothing
 YAWN_COOLDOWN_SEC = 4.0         # Cooldown sau khi ngáp (giây)
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -82,8 +82,8 @@ CAN_WATCHDOG_TIMEOUT = 1.5          # Thời gian tối đa (giây) chờ phản
 # ──────────────────────────────────────────────────────────────────────────────
 # Cấu hình Hiển thị (HUD Overlay & Face Bounding Box)
 # ──────────────────────────────────────────────────────────────────────────────
-HUD_OVERLAY_ENABLED   = False        # Bật/tắt toàn bộ bảng HUD Overlay dưới đáy màn hình
-FACE_BBOX_ENABLED     = True        # Bật/tắt Bounding Box tracking khuôn mặt kèm nhãn trạng thái
+HUD_OVERLAY_ENABLED   = True        # Bật/tắt toàn bộ bảng HUD Overlay dưới đáy màn hình
+FACE_BBOX_ENABLED     = False        # Bật/tắt Bounding Box tracking khuôn mặt kèm nhãn trạng thái
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Cấu hình Dashboard Bridge (Streaming Video & Telemetry lên Web Dashboard)
