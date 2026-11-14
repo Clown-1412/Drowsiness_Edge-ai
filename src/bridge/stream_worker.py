@@ -7,7 +7,7 @@ Khi client ngắt kết nối → generator thoát → CPU encoding = 0%.
 Luồng hoạt động:
   1. Client GET /video/live → FastAPI gọi generate_mjpeg_stream().
   2. Generator đọc frame mới nhất từ SharedMemory.
-  3. Encode BGR → JPEG bằng cv2.imencode().
+  3. Encode BGR → JPEG bất đồng bộ trên thread riêng bằng cv2.imencode().
   4. Yield multipart chunk → trình duyệt hiển thị video liên tục.
   5. Client đóng tab → GeneratorExit → generator dừng, print log.
 
@@ -19,28 +19,19 @@ Format MJPEG multipart:
   \\r\\n
 """
 import asyncio
-import sys
 import time
 from typing import AsyncGenerator
 
-if sys.platform == 'win32':
-    try:
-        if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
-            sys.stdout.reconfigure(encoding='utf-8', errors='replace')
-        if sys.stderr and hasattr(sys.stderr, 'reconfigure'):
-            sys.stderr.reconfigure(encoding='utf-8', errors='replace')
-    except Exception:
-        pass
-
 import cv2
 
-from src.bridge.ipc_manager import VideoSharedMemory
+from src.bridge.video_shm import VideoSharedMemory
+from src.config import STREAM_TARGET_FPS, STREAM_JPEG_QUALITY
 
 
 async def generate_mjpeg_stream(
     video_shm: VideoSharedMemory,
-    target_fps: int = 20,
-    jpeg_quality: int = 70,
+    target_fps: int = STREAM_TARGET_FPS,
+    jpeg_quality: int = STREAM_JPEG_QUALITY,
 ) -> AsyncGenerator[bytes, None]:
     """
     Async generator tạo MJPEG multipart stream từ SharedMemory.
@@ -55,8 +46,8 @@ async def generate_mjpeg_stream(
 
     Args:
         video_shm: VideoSharedMemory instance ở reader mode.
-        target_fps: FPS tối đa cho stream (mặc định 20).
-        jpeg_quality: Chất lượng nén JPEG 0–100 (mặc định 70).
+        target_fps: FPS tối đa cho stream (mặc định STREAM_TARGET_FPS).
+        jpeg_quality: Chất lượng nén JPEG 0–100 (mặc định STREAM_JPEG_QUALITY).
 
     Yields:
         bytes: MJPEG multipart chunk (header + jpeg data + boundary).
@@ -64,7 +55,7 @@ async def generate_mjpeg_stream(
     # Tham số JPEG cho cv2.imencode
     encode_params = [cv2.IMWRITE_JPEG_QUALITY, jpeg_quality]
     # Khoảng thời gian tối thiểu giữa 2 frame (giây)
-    frame_interval = 1.0 / target_fps
+    frame_interval = 1.0 / max(target_fps, 1)
 
     print(f"[Stream] Client connected -> start JPEG encoding "
           f"(target {target_fps} FPS, quality {jpeg_quality}%)")
@@ -88,8 +79,10 @@ async def generate_mjpeg_stream(
                 # Chưa đến lúc encode frame tiếp — nhường CPU
                 await asyncio.sleep(frame_interval - elapsed)
 
-            # ── Encode BGR → JPEG ────────────────────────────────────
-            success, jpeg_buffer = cv2.imencode('.jpg', frame, encode_params)
+            # ── Encode BGR → JPEG (offload sang threadpool để không block event loop) ──
+            success, jpeg_buffer = await asyncio.to_thread(
+                cv2.imencode, '.jpg', frame, encode_params
+            )
             if not success:
                 # Encode thất bại (rất hiếm) — bỏ qua frame này
                 await asyncio.sleep(0.01)
@@ -98,8 +91,6 @@ async def generate_mjpeg_stream(
             last_encode_time = time.monotonic()
 
             # ── Yield MJPEG multipart chunk ──────────────────────────
-            #   Format chuẩn multipart/x-mixed-replace:
-            #   --frame\r\nContent-Type: image/jpeg\r\n\r\n<data>\r\n
             jpeg_bytes = jpeg_buffer.tobytes()
             yield (
                 b'--frame\r\n'

@@ -70,10 +70,11 @@ class ThreadedCapture:
     def read(self) -> Tuple[bool, Optional[np.ndarray]]:
         """
         Thread-safe: trả về (success, frame_mới_nhất).
+        Chỉ trả về True khi có frame mới thực sự, tránh phân tích frame cũ khi camera đơ.
         Copy frame ra để tránh race condition.
         """
         with self._lock:
-            if self._frame is None:
+            if not self._new_frame or self._frame is None:
                 return False, None
             frame = self._frame.copy()
             self._new_frame = False

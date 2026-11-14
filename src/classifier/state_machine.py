@@ -32,11 +32,10 @@ class DriverStateMachine:
     """
 
     def __init__(self, drowsy_threshold: float, mar_threshold: float,
-                 alpha: float, yawn_cooldown_sec: float):
+                 alpha: float, yawn_cooldown_sec: float = 4.0):
         self.drowsy_threshold  = drowsy_threshold
         self.mar_threshold     = mar_threshold
         self.alpha             = alpha
-        self.yawn_cooldown_sec = yawn_cooldown_sec
         self.smoothed_drowsy_prob = 0.0
 
     def update(self, raw_drowsy_prob: float, current_mar: float,

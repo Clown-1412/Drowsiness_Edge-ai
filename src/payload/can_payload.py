@@ -18,6 +18,7 @@ from typing import Dict, Any
 _STATE_NAMES = {0: "ALERT", 1: "DROWSY/YAWN", 2: "MICROSLEEP", 3: "INIT"}
 _TRACKING_NAMES = {False: "NO_FACE", True: "FACE_OK"}
 _ALERT_NAMES = {0: "NORMAL", 1: "WARNING", 2: "CRITICAL"}
+ECU_STATE_NAMES = {0: "IDLE", 1: "DROWSY", 2: "DOZING", 3: "NO_FACE"}
 
 
 @dataclass

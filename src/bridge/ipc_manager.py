@@ -15,158 +15,13 @@ Kiến trúc double-buffered SharedMemory:
 
 Telemetry & Command dùng multiprocessing.Queue — đơn giản, thread-safe.
 """
-import struct
-import time
 import multiprocessing
-from multiprocessing import shared_memory
+import queue
 from typing import Optional, Tuple
 
 import numpy as np
 
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Hằng số layout SharedMemory
-# ──────────────────────────────────────────────────────────────────────────────
-_HEADER_SIZE = 64                          # 64 bytes header cố định
-_WRITE_IDX_OFFSET = 0                      # Byte 0: write_index (0 hoặc 1)
-_TIMESTAMP_OFFSET = 8                      # Bytes 8–15: timestamp float64 LE
-
-
-class VideoSharedMemory:
-    """
-    Double-buffered SharedMemory cho video frame.
-
-    Writer (Core DMS — Process 1):
-      - Ghi frame vào slot KHÔNG active (inactive = 1 - write_index).
-      - Sau khi copy xong, flip write_index (atomic byte write).
-      - Thời gian write_frame() < 0.3ms (memcpy 921KB).
-
-    Reader (Dashboard Server — Process 2):
-      - Đọc slot write_index hiện tại (slot chứa frame mới nhất).
-      - Copy ra numpy array riêng để tránh data race.
-      - Không cần lock — writer ghi slot khác trước khi flip.
-    """
-
-    def __init__(self, name: str, frame_shape: Tuple[int, int, int],
-                 create: bool = False):
-        """
-        Khởi tạo hoặc attach vào SharedMemory.
-
-        Args:
-            name: Tên POSIX shared memory (VD: 'dms_video_shm').
-            frame_shape: Kích thước frame (height, width, channels),
-                         VD: (480, 640, 3).
-            create: True = tạo mới (writer), False = attach (reader).
-        """
-        self._name = name
-        self._frame_shape = frame_shape
-        # Kích thước 1 frame BGR (bytes) — 480 × 640 × 3 = 921,600
-        self._frame_bytes = int(np.prod(frame_shape))
-        # Tổng dung lượng SHM: header + 2 slot
-        self._total_size = _HEADER_SIZE + 2 * self._frame_bytes
-        self._is_creator = create
-
-        if create:
-            # Dọn SHM cũ nếu còn tồn tại (crash trước đó)
-            try:
-                old = shared_memory.SharedMemory(name=name, create=False)
-                old.close()
-                old.unlink()
-            except FileNotFoundError:
-                pass
-
-            self._shm = shared_memory.SharedMemory(
-                name=name, create=True, size=self._total_size
-            )
-            # Khởi tạo header: write_index = 0, timestamp = 0.0
-            self._shm.buf[_WRITE_IDX_OFFSET] = 0
-            struct.pack_into('<d', self._shm.buf, _TIMESTAMP_OFFSET, 0.0)
-        else:
-            # Reader: attach vào SHM đã tạo bởi writer
-            self._shm = shared_memory.SharedMemory(name=name, create=False)
-
-    # ── Tính offset slot trong buffer ────────────────────────────────────
-    def _slot_offset(self, slot_index: int) -> int:
-        """Trả về byte offset của slot (0 hoặc 1) trong SHM buffer."""
-        return _HEADER_SIZE + slot_index * self._frame_bytes
-
-    # ── Writer API ───────────────────────────────────────────────────────
-    def write_frame(self, frame: np.ndarray) -> None:
-        """
-        Ghi frame BGR vào slot KHÔNG active, rồi flip write_index.
-
-        Quy trình zero-contention:
-          1. Đọc write_index hiện tại (slot đang được reader đọc).
-          2. Ghi frame vào slot KHÁC (inactive slot).
-          3. Ghi timestamp.
-          4. Flip write_index sang slot vừa ghi (atomic byte write).
-
-        Thời gian thực thi: ~0.2–0.3ms (memcpy 921KB trên RAM).
-        Không cần lock vì chỉ 1 writer, và reader đọc slot cũ
-        trong khi writer ghi slot mới.
-
-        Args:
-            frame: numpy array BGR shape (480, 640, 3) dtype uint8.
-        """
-        buf = self._shm.buf
-        # Bước 1: Xác định slot inactive (slot mà reader KHÔNG đang đọc)
-        current_write_idx = buf[_WRITE_IDX_OFFSET]
-        next_idx = 1 - current_write_idx          # Flip: 0→1, 1→0
-
-        # Bước 2: Copy pixel data vào inactive slot
-        offset = self._slot_offset(next_idx)
-        frame_flat = frame.tobytes()
-        buf[offset:offset + self._frame_bytes] = frame_flat
-
-        # Bước 3: Ghi timestamp (float64 little-endian, 8 bytes)
-        struct.pack_into('<d', buf, _TIMESTAMP_OFFSET, time.time())
-
-        # Bước 4: Flip write_index — atomic single-byte write
-        #   Reader sẽ thấy slot mới ngay lập tức ở lần đọc tiếp theo.
-        buf[_WRITE_IDX_OFFSET] = next_idx
-
-    # ── Reader API ───────────────────────────────────────────────────────
-    def read_latest_frame(self) -> Tuple[Optional[np.ndarray], float]:
-        """
-        Đọc frame mới nhất từ SharedMemory.
-
-        Returns:
-            (frame, timestamp):
-              - frame: numpy array BGR (480,640,3) — bản copy an toàn.
-                       None nếu chưa có frame nào (timestamp == 0.0).
-              - timestamp: thời điểm writer ghi frame (time.time()).
-        """
-        buf = self._shm.buf
-
-        # Đọc timestamp trước — nếu 0.0 nghĩa là chưa có frame
-        timestamp = struct.unpack_from('<d', buf, _TIMESTAMP_OFFSET)[0]
-        if timestamp == 0.0:
-            return None, 0.0
-
-        # Đọc write_index → slot chứa frame mới nhất
-        read_idx = buf[_WRITE_IDX_OFFSET]
-        offset = self._slot_offset(read_idx)
-
-        # Copy bytes ra numpy array (tránh đọc trực tiếp từ SHM buffer)
-        frame_bytes = bytes(buf[offset:offset + self._frame_bytes])
-        frame = np.frombuffer(frame_bytes, dtype=np.uint8).reshape(
-            self._frame_shape
-        )
-        return frame, timestamp
-
-    # ── Cleanup ──────────────────────────────────────────────────────────
-    def cleanup(self) -> None:
-        """
-        Đóng và giải phóng SharedMemory.
-        - Reader: chỉ close() (detach khỏi SHM).
-        - Writer (creator): close() + unlink() (xóa SHM khỏi OS).
-        """
-        try:
-            self._shm.close()
-            if self._is_creator:
-                self._shm.unlink()
-        except Exception:
-            pass  # Bỏ qua lỗi khi cleanup (SHM có thể đã bị unlink)
+from src.bridge.video_shm import VideoSharedMemory
 
 
 class IPCManager:
@@ -234,26 +89,24 @@ class IPCManager:
 
     def post_telemetry(self, snapshot_dict: dict) -> None:
         """
-        Đẩy telemetry snapshot mới nhất vào queue — drop nếu queue đầy.
+        Đẩy telemetry snapshot mới nhất vào queue (Drop-Oldest semantics).
 
-        Sử dụng put_nowait() → nếu queue đầy (maxsize=1), raise Full
-        → catch và bỏ qua. Điều này đảm bảo Core DMS không bị block
-        chờ Dashboard đọc telemetry.
-
-        Args:
-            snapshot_dict: Dict chứa trạng thái hiện tại, VD:
-                {
-                    "state": "Drowsy",
-                    "drowsy_prob": 0.82,
-                    "mar": 0.45,
-                    "fps": 4.8,
-                    "timestamp": 1697558400.123
-                }
+        Nếu queue đầy (maxsize=1), xóa bỏ snapshot cũ và đưa snapshot mới vào.
+        Không bao giờ raise exception để Core DMS không bị block.
         """
         try:
             self._telemetry_queue.put_nowait(snapshot_dict)
+        except queue.Full:
+            try:
+                self._telemetry_queue.get_nowait()
+            except queue.Empty:
+                pass
+            try:
+                self._telemetry_queue.put_nowait(snapshot_dict)
+            except Exception:
+                pass
         except Exception:
-            pass  # Queue đầy → drop bản cũ, không block Core
+            pass
 
     def poll_command(self) -> Optional[dict]:
         """
@@ -267,33 +120,6 @@ class IPCManager:
             return self._command_queue.get_nowait()
         except Exception:
             return None  # Queue rỗng hoặc lỗi → trả None
-
-    # ── Reader API (gọi từ Dashboard Server — Process 2) ────────────────
-    def get_telemetry(self) -> Optional[dict]:
-        """
-        Đọc telemetry snapshot mới nhất (non-blocking, phía server).
-
-        Returns:
-            dict telemetry nếu có, None nếu queue rỗng.
-        """
-        try:
-            return self._telemetry_queue.get_nowait()
-        except Exception:
-            return None
-
-    def get_video_shm_reader(self) -> VideoSharedMemory:
-        """
-        Tạo và trả về VideoSharedMemory ở chế độ reader (attach, không tạo mới).
-
-        Dashboard Server gọi hàm này để có SHM reader riêng,
-        tách biệt với writer của Core DMS.
-
-        Returns:
-            VideoSharedMemory instance ở reader mode (create=False).
-        """
-        return VideoSharedMemory(
-            name=self._shm_name, frame_shape=self._frame_shape, create=False
-        )
 
     # ── Process Management ───────────────────────────────────────────────
     def start_server_process(self, host: str, port: int) -> None:

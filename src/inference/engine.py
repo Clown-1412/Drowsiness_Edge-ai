@@ -13,15 +13,6 @@ import threading
 import time
 from collections import deque
 
-if sys.platform == 'win32':
-    try:
-        if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
-            sys.stdout.reconfigure(encoding='utf-8', errors='replace')
-        if sys.stderr and hasattr(sys.stderr, 'reconfigure'):
-            sys.stderr.reconfigure(encoding='utf-8', errors='replace')
-    except Exception:
-        pass
-
 import numpy as np
 
 from src.config import (
@@ -32,16 +23,15 @@ from src.config import (
 from src.inference.preprocessor import preprocess_crop_uint8, to_onnx_input
 from src.classifier.state_machine import DriverStateMachine
 from src.shared_state import SharedState
+from src.utils import configure_win_console, restore_standard_logging
+
+configure_win_console()
 
 # ── Detect RKNN availability (graceful fallback) ──
 try:
     from rknnlite.api import RKNNLite
     RKNN_AVAILABLE = True
-    # Khôi phục logging nếu rknnlite làm biến dạng logging._nameToLevel
-    import logging
-    for name, lvl in {'CRITICAL': 50, 'ERROR': 40, 'WARNING': 30, 'INFO': 20, 'DEBUG': 10, 'NOTSET': 0}.items():
-        logging._nameToLevel[name] = lvl
-        logging._levelToName[lvl] = name
+    restore_standard_logging()
 except ImportError:
     RKNN_AVAILABLE = False
 
@@ -157,9 +147,12 @@ class InferenceEngine(threading.Thread):
                 detected  = self.shared_state.face_detected
                 last_yawn = self.shared_state.last_yawn_time
 
-            # Bỏ qua nếu không có mặt
+            # Bỏ qua và reset sequence buffer nếu không có mặt
             if not detected or face is None or eye is None or mouth is None:
+                if len(self.feature_buffer) > 0:
+                    self.feature_buffer.clear()
                 with self.shared_state.lock:
+                    self.shared_state.buffer_ready = False
                     self.shared_state.inference_fps = 0.0
                 continue
 

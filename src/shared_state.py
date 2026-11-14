@@ -20,10 +20,6 @@ class SharedState:
     """
     lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
-    # ── Camera → Detection / Display ──
-    latest_frame: Optional[np.ndarray] = None
-    frame_timestamp: float = 0.0
-
     # ── Detection → Inference (cập nhật bởi main thread mỗi frame) ──
     face_crop:     Optional[np.ndarray] = None
     eye_crop:      Optional[np.ndarray] = None

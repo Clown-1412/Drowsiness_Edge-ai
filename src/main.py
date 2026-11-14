@@ -5,30 +5,20 @@ Kiến trúc đa luồng: Camera Thread + Inference Thread + Main Thread.
 Main Thread chạy: Detection (MediaPipe) + Display + Payload.
 MediaPipe FaceLandmarker không thread-safe → bắt buộc chạy trên main thread.
 
-Logic pipeline giữ nguyên 100% từ run_webcam_onnx.py.
 """
 import signal
 import sys
 import time
 from pathlib import Path
 
-
-# Đảm bảo console Windows không bị lỗi UnicodeEncodeError khi print tiếng Việt / emoji
-if sys.platform == 'win32':
-    try:
-        if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
-            sys.stdout.reconfigure(encoding='utf-8', errors='replace')
-        if sys.stderr and hasattr(sys.stderr, 'reconfigure'):
-            sys.stderr.reconfigure(encoding='utf-8', errors='replace')
-    except Exception:
-        pass
-
 # Đảm bảo project root luôn có trong sys.path:
-# 1. python src/main.py
-# 2. python -m src.main
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+
+from src.utils import configure_win_console
+
+configure_win_console()
 
 import cv2
 
@@ -77,7 +67,7 @@ def main():
     )
 
     # ── 4. Khởi tạo Inference Thread (ONNX sessions sẽ load ở đây) ──
-    print("🧠 Khởi tạo ONNX Inference Engine...")
+    print("Khởi tạo ONNX Inference Engine...")
     inference = InferenceEngine(state)
 
     # ── 5. Khởi tạo Renderer (Frame decorator cho Web Dashboard stream) ──
@@ -139,61 +129,52 @@ def main():
 
             current_time = time.time()
 
+            # ── Tính FPS camera (display) ──
+            camera_fps = 1.0 / max(current_time - prev_time, 0.001)
+            prev_time = current_time
+
             # ══════════════════════════════════════════════════════════
-            # Detection: MediaPipe (chạy trên main thread vì không
-            # thread-safe).
+            # Detection: MediaPipe (chạy trên main thread vì không thread-safe)
             # ══════════════════════════════════════════════════════════
             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             face_crop, eye_crop, mouth_crop, mar, face_bbox = face_extractor.extract(
                 frame_rgb
             )
-
             face_detected = face_crop is not None
 
             # ══════════════════════════════════════════════════════════
-            # Cập nhật SharedState cho Inference Thread.
-            # Yawn timer cập nhật MỌI frame.
+            # Đồng bộ SharedState: Ghi Detection & Đọc Snapshot (1 Lock Atomic)
             # ══════════════════════════════════════════════════════════
             with state.lock:
+                # 1. Ghi nhận dữ liệu Detection cho Inference Thread
                 state.face_crop     = face_crop
                 state.eye_crop      = eye_crop
                 state.mouth_crop    = mouth_crop
                 state.face_detected = face_detected
+                state.camera_fps    = camera_fps
 
                 if face_detected:
                     state.current_mar = mar
-                    # Cập nhật yawn timer ở MỌI frame khi miệng mở
                     if mar >= MAR_THRESHOLD:
                         state.last_yawn_time = current_time
 
-            # ══════════════════════════════════════════════════════════
-            # Đọc state hiện tại để hiển thị
-            # ══════════════════════════════════════════════════════════
-            with state.lock:
-                label_text     = state.label_text
-                label_color    = state.label_color
-                smoothed_prob  = state.smoothed_drowsy_prob
-                current_mar    = state.current_mar
-                region_weights = list(state.region_weights)
-                level_id       = state.level_id
-                buffer_ready   = state.buffer_ready
+                # 2. Đọc nhanh snapshot trạng thái để Render & Gửi CAN
+                label_text          = state.label_text
+                label_color         = state.label_color
+                smoothed_prob       = state.smoothed_drowsy_prob
+                current_mar         = state.current_mar
+                region_weights      = list(state.region_weights)
+                level_id            = state.level_id
+                buffer_ready        = state.buffer_ready
+                alert_ecu_connected = state.alert_ecu_connected
+                alert_ecu_state     = state.alert_ecu_state
+                alert_ecu_hw_health = state.alert_ecu_hw_health
 
             # ── Build Payload 8-byte (CAN Bus 2.0B) ──
             payload = build_can_payload(level_id, face_detected, buffer_ready)
 
             # ── Đẩy payload sang CAN Sender Thread (non-blocking) ──
             can_sender.post(payload)
-
-            # ── Tính FPS camera (display) ──
-            camera_fps = 1.0 / max(current_time - prev_time, 0.001)
-            prev_time = current_time
-
-            # ── Đọc trạng thái ECU Alert từ SharedState (cho HUD overlay) và lưu camera_fps ──
-            with state.lock:
-                state.camera_fps    = camera_fps
-                alert_ecu_connected = state.alert_ecu_connected
-                alert_ecu_state     = state.alert_ecu_state
-                alert_ecu_hw_health = state.alert_ecu_hw_health
 
             # ── Render Bounding Box + HUD Overlay lên frame (phục vụ stream Web Dashboard) ──
             renderer.draw(
@@ -224,10 +205,22 @@ def main():
     finally:
         print("Đang dọn dẹp tài nguyên...")
         if ipc_manager is not None:
-            ipc_manager.cleanup()
-        camera.stop()
-        can_sender.stop()
-        inference.stop()
+            try:
+                ipc_manager.cleanup()
+            except Exception as e:
+                print(f"[Cleanup] Lỗi đóng IPC Manager: {e}")
+        try:
+            camera.stop()
+        except Exception as e:
+            print(f"[Cleanup] Lỗi dừng Camera: {e}")
+        try:
+            can_sender.stop()
+        except Exception as e:
+            print(f"[Cleanup] Lỗi dừng CAN Sender: {e}")
+        try:
+            inference.stop()
+        except Exception as e:
+            print(f"[Cleanup] Lỗi dừng Inference Engine: {e}")
         print("Đã thoát sạch pipeline DMS")
 
 

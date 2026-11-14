@@ -14,13 +14,13 @@ Phiên bản 2.0: Hỗ trợ giao tiếp 2 chiều (Bidirectional CAN)
   - Tự động quản lý và tăng Alive Counter (0 to 15 rolling counter).
   - Tự phục hồi (reconnect cooldown) khi đứt kết nối hoặc bus-off mà không làm crash app.
 """
-import sys
+import copy
 import time
 import threading
 from collections import deque
 from typing import Optional
 
-from src.payload.can_payload import CANPayload
+from src.payload.can_payload import CANPayload, ECU_STATE_NAMES
 
 # ── Import python-can an toàn ──
 try:
@@ -37,10 +37,6 @@ def _safe_print(msg: str):
         print(msg)
     except UnicodeEncodeError:
         print(msg.encode('ascii', errors='replace').decode('ascii'))
-
-
-# ── Tên trạng thái ECU Alert (giải mã 0x201) ──
-_ALERT_STATE_NAMES = {0: "IDLE", 1: "DROWSY", 2: "DOZING", 3: "NO_FACE"}
 
 
 class CANSenderThread(threading.Thread):
@@ -160,9 +156,9 @@ class CANSenderThread(threading.Thread):
     def post(self, payload: CANPayload):
         """
         Main Thread hoặc Inference Thread gọi hàm này để cập nhật payload mới nhất.
-        Hàm hoàn toàn non-blocking: chỉ ghi đè vào deque(maxlen=1).
+        Hàm hoàn toàn non-blocking: copy shallow tránh race condition và append vào deque(maxlen=1).
         """
-        self._payload_slot.append(payload)
+        self._payload_slot.append(copy.copy(payload))
 
     # ── Vòng lặp truyền phát (Consumer) ───────────────────────────────────────
 
@@ -229,29 +225,29 @@ class CANSenderThread(threading.Thread):
     def _recv_feedback(self):
         """
         Đọc không chặn các frame CAN phản hồi (0x201) từ ECU Alert ESP32.
-        Giải mã và cập nhật trạng thái kết nối / sức khỏe phần cứng vào SharedState.
+        Xả sạch (drain) hàng đợi RX và cập nhật frame phản hồi mới nhất vào SharedState.
         """
         if not self.is_connected:
             return
 
         try:
-            # Đọc không chặn (timeout=0)
-            msg = self._bus.recv(timeout=0)
-            if msg is None:
+            # Xả sạch (drain) toàn bộ frame trong buffer RX
+            latest_feedback = None
+            while True:
+                msg = self._bus.recv(timeout=0)
+                if msg is None:
+                    break
+                if msg.arbitration_id == self.feedback_id and msg.dlc >= 5:
+                    latest_feedback = msg
+
+            if latest_feedback is None:
                 return
 
-            # Chỉ xử lý frame phản hồi từ ECU Alert
-            if msg.arbitration_id != self.feedback_id:
-                return
-            if msg.dlc < 5:
-                return
-
-            # Giải mã frame 0x201
-            executing_state = msg.data[0] & 0x03
-            hw_health       = msg.data[1]
-            echo_alive      = msg.data[2] & 0x0F
-            esp32_alive     = msg.data[3] & 0x0F
-            error_code      = msg.data[4]
+            # Giải mã frame 0x201 mới nhất
+            executing_state = latest_feedback.data[0] & 0x03
+            hw_health       = latest_feedback.data[1]
+            # byte 2, 3: echo_alive, esp32_alive (dùng trong debug / parity)
+            error_code      = latest_feedback.data[4]
 
             now = time.time()
             self._last_feedback_time = now
@@ -266,8 +262,8 @@ class CANSenderThread(threading.Thread):
                     self._shared_state.alert_ecu_error_code = error_code
                     self._shared_state.last_feedback_time = now
 
-        except Exception:
-            # Không để lỗi recv làm crash thread
+        except Exception as e:
+            # Ghi log debug an toàn, không để lỗi recv làm crash thread
             pass
 
     def _update_watchdog(self):

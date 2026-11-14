@@ -13,47 +13,20 @@ Endpoints:
   GET /api/telemetry   → JSON telemetry snapshot mới nhất
   WS  /ws/telemetry    → WebSocket stream JSON telemetry @ 10Hz
 """
-import sys
-import logging
-
-# ── Fix stdout UTF-8 trên Windows ────────────────────────────────────────
-if sys.platform == 'win32':
-    try:
-        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
-        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
-    except Exception:
-        pass
-
-
-def _restore_standard_logging():
-    """
-    Khắc phục bug của rknnlite làm biến dạng logging._nameToLevel trong Python.
-    Đảm bảo uvicorn và standard logging không bị lỗi 'Unknown level: INFO'.
-    """
-    standard_levels = {
-        'CRITICAL': logging.CRITICAL,
-        'ERROR': logging.ERROR,
-        'WARNING': logging.WARNING,
-        'INFO': logging.INFO,
-        'DEBUG': logging.DEBUG,
-        'NOTSET': logging.NOTSET,
-    }
-    for name, level in standard_levels.items():
-        logging._nameToLevel[name] = level
-        logging._levelToName[level] = name
-
-
+import asyncio
+from contextlib import asynccontextmanager
+import multiprocessing
 from typing import Tuple
 
-import asyncio
-import multiprocessing
-import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse
+import uvicorn
 
-from src.bridge.ipc_manager import VideoSharedMemory
+from src.bridge.video_shm import VideoSharedMemory
 from src.bridge.stream_worker import generate_mjpeg_stream
+from src.config import STREAM_TARGET_FPS, STREAM_JPEG_QUALITY, TELEMETRY_PUSH_HZ
+from src.utils import configure_win_console, restore_standard_logging
 
 
 def run_dashboard_server(
@@ -67,8 +40,9 @@ def run_dashboard_server(
     """
     Entry-point cho Dashboard Server — chạy trên Process 2.
     """
-    # Khôi phục logging chuẩn ngay khi Process 2 vừa khởi động
-    _restore_standard_logging()
+    # Khởi tạo môi trường console và logging
+    configure_win_console()
+    restore_standard_logging()
 
     # ── Attach vào SharedMemory (reader mode — KHÔNG tạo mới) ────────
     video_shm = VideoSharedMemory(
@@ -78,6 +52,13 @@ def run_dashboard_server(
     # ── Cache telemetry mới nhất ─────────────────────────────────────
     _telemetry_cache = {"state": "Initializing", "timestamp": 0.0}
 
+    # ── Lifespan Context Manager thay cho on_event deprecated ─────────
+    @asynccontextmanager
+    async def lifespan(app_instance: FastAPI):
+        yield
+        video_shm.cleanup()
+        print("[Server] SharedMemory reader cleaned up.")
+
     # ══════════════════════════════════════════════════════════════════
     # Tạo FastAPI App
     # ══════════════════════════════════════════════════════════════════
@@ -85,23 +66,17 @@ def run_dashboard_server(
         title="DMS Dashboard Server",
         description="Video streaming & telemetry API cho Driver Monitoring System",
         version="1.0.0",
+        lifespan=lifespan,
     )
 
     # ── CORS Middleware — cho phép mọi origin (truy cập LAN) ─────────
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],         # Cho phép mọi origin (LAN access)
-        allow_credentials=True,
+        allow_credentials=False,
         allow_methods=["*"],         # GET, POST, OPTIONS, ...
         allow_headers=["*"],         # Mọi header
     )
-
-    # ── Shutdown Event — dọn dẹp SHM reader khi server tắt ──────────
-    @app.on_event("shutdown")
-    async def _on_shutdown():
-        """Cleanup SharedMemory reader khi server shutdown."""
-        video_shm.cleanup()
-        print("[Server] SharedMemory reader cleaned up.")
 
     # ══════════════════════════════════════════════════════════════════
     # Routes
@@ -113,8 +88,8 @@ def run_dashboard_server(
         return StreamingResponse(
             generate_mjpeg_stream(
                 video_shm=video_shm,
-                target_fps=20,
-                jpeg_quality=70,
+                target_fps=STREAM_TARGET_FPS,
+                jpeg_quality=STREAM_JPEG_QUALITY,
             ),
             media_type='multipart/x-mixed-replace; boundary=frame',
         )
@@ -124,7 +99,7 @@ def run_dashboard_server(
         """Health check endpoint — kiểm tra server hoạt động."""
         return JSONResponse(content={
             "status": "ok",
-            "stream_fps": 20,
+            "stream_fps": STREAM_TARGET_FPS,
             "port": port,
         })
 
@@ -141,8 +116,9 @@ def run_dashboard_server(
 
     @app.websocket("/ws/telemetry")
     async def websocket_telemetry(websocket: WebSocket):
-        """WebSocket endpoint — stream JSON telemetry snapshot ở tần số 10Hz."""
+        """WebSocket endpoint — stream JSON telemetry snapshot."""
         await websocket.accept()
+        interval = 1.0 / max(TELEMETRY_PUSH_HZ, 1)
         try:
             while True:
                 try:
@@ -152,7 +128,7 @@ def run_dashboard_server(
                     pass
 
                 await websocket.send_json(_telemetry_cache)
-                await asyncio.sleep(0.1)
+                await asyncio.sleep(interval)
         except (WebSocketDisconnect, Exception):
             pass
 

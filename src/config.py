@@ -86,6 +86,3 @@ STREAM_TARGET_FPS    = 20             # FPS tối đa cho video stream (20 FPS, 
 STREAM_JPEG_QUALITY  = 70             # Chất lượng nén JPEG (0–100, 70 = cân bằng chất lượng/dung lượng)
 SHM_VIDEO_NAME       = 'dms_video_shm'  # Tên POSIX Shared Memory cho video frames
 TELEMETRY_PUSH_HZ    = 10             # Tần suất đẩy telemetry JSON (Hz)
-
-
-
