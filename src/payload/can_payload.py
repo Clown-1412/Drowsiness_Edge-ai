@@ -84,8 +84,8 @@ def build_can_payload(level_id: int, face_detected: bool,
     Khi buffer_ready is False (chưa đủ 16 frames cho TCN):
         Luôn trả về driver_state = 3 (INIT) và alert_level = 0 (Normal).
     """
-    if not buffer_ready:
-        driver_state = 3   # INIT
+    if not buffer_ready or not face_detected:
+        driver_state = 3   # INIT / NO_FACE
         alert_level = 0    # Normal
     else:
         state_map = {1: 0, 2: 1, 0: 2}
