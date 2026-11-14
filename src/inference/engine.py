@@ -147,12 +147,9 @@ class InferenceEngine(threading.Thread):
                 detected  = self.shared_state.face_detected
                 last_yawn = self.shared_state.last_yawn_time
 
-            # Bỏ qua và reset sequence buffer nếu không có mặt
+            # Bỏ qua nếu không có mặt
             if not detected or face is None or eye is None or mouth is None:
-                if len(self.feature_buffer) > 0:
-                    self.feature_buffer.clear()
                 with self.shared_state.lock:
-                    self.shared_state.buffer_ready = False
                     self.shared_state.inference_fps = 0.0
                 continue
 
