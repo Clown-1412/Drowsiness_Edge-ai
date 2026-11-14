@@ -28,7 +28,6 @@ from src.config import (
     EXTRACTOR_ONNX, EXTRACTOR_RKNN, CLASSIFIER_ONNX,
     SEQ_LEN, SAMPLE_INTERVAL,
     DROWSY_THRESHOLD, MAR_THRESHOLD, ALPHA, YAWN_COOLDOWN_SEC,
-    setup_cuda_dlls,
 )
 from src.inference.preprocessor import preprocess_crop_uint8, to_onnx_input
 from src.classifier.state_machine import DriverStateMachine
@@ -46,8 +45,6 @@ try:
 except ImportError:
     RKNN_AVAILABLE = False
 
-# ── Nạp DLL CUDA TRƯỚC khi import onnxruntime ──
-setup_cuda_dlls()
 import onnxruntime as ort
 
 
@@ -108,25 +105,17 @@ class InferenceEngine(threading.Thread):
                 print(f"⚠️  RKNN init thất bại: {e} — fallback về ONNX")
                 self._use_rknn = False
 
-        # ── Feature Extractor: ONNX fallback ──
+        # ── Feature Extractor: ONNX fallback (Thuần CPU cho môi trường dev test) ──
         if not self._use_rknn:
             if not os.path.exists(EXTRACTOR_ONNX):
                 raise FileNotFoundError(
                     f"❌ Không tìm thấy file ONNX: {EXTRACTOR_ONNX}\n"
                     "Vui lòng chạy export_to_onnx.py trước để xuất mô hình."
                 )
-            available = ort.get_available_providers()
-            if 'CUDAExecutionProvider' in available:
-                ext_providers = ['CUDAExecutionProvider', 'CPUExecutionProvider']
-            elif 'DmlExecutionProvider' in available:
-                ext_providers = ['DmlExecutionProvider', 'CPUExecutionProvider']
-            else:
-                ext_providers = ['CPUExecutionProvider']
             self.session_extractor = ort.InferenceSession(
-                EXTRACTOR_ONNX, providers=ext_providers
+                EXTRACTOR_ONNX, providers=['CPUExecutionProvider']
             )
-            active_provider = self.session_extractor.get_providers()[0]
-            print(f"🚀 Feature Extractor: ONNX ({active_provider})")
+            print("🚀 Feature Extractor: ONNX fallback (CPUExecutionProvider)")
 
         # ── TCN Classifier: luôn ONNX CPU ──
         if not os.path.exists(CLASSIFIER_ONNX):

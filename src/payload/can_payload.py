@@ -1,6 +1,6 @@
 """
 CAN Payload — Đóng gói trạng thái DMS thành chuẩn CAN Bus 8-byte.
-Thay thế DMSPayload 1-byte cũ, phục vụ thống nhất cho cả Serial UART và CAN Bus.
+Đóng gói frame CAN Bus 2.0B 8-byte điều khiển ECU Alert ESP32.
 
 Cấu trúc frame CAN tiêu chuẩn 8-byte:
   - Byte 0: State ID [1:0] (0=ALERT, 1=DROWSY/YAWN, 2=MICROSLEEP, 3=INIT), [7:2]=0
@@ -50,7 +50,7 @@ class CANPayload:
         return f"{self.to_bytes()[0]:08b}"
 
     def to_display_dict(self) -> Dict[str, Any]:
-        """Dict cho renderer hiển thị chi tiết trên OpenCV window."""
+        """Dict cho renderer hiển thị chi tiết trên HUD Overlay stream."""
         return {
             'state':        _STATE_NAMES.get(self.driver_state, "???"),
             'tracking':     _TRACKING_NAMES.get(bool(self.face_detected), "???"),

@@ -3,7 +3,6 @@ Cấu hình tập trung cho DMS Pipeline.
 Tất cả hằng số, ngưỡng, đường dẫn được định nghĩa tại đây.
 Giá trị giữ nguyên 100% so với demo gốc (run_webcam_onnx.py).
 """
-import os
 import sys
 from pathlib import Path
 
@@ -60,14 +59,6 @@ IMAGENET_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
 IMAGENET_STD  = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Cấu hình Serial / Debug ESP32
-# ──────────────────────────────────────────────────────────────────────────────
-SERIAL_ENABLED            = False        # Bật/tắt truyền Serial (False khi test không phần cứng)
-SERIAL_PORT               = 'COM1'      # Cổng Serial ESP32 (Linux: '/dev/ttyUSB0')
-SERIAL_BAUDRATE           = 115200      # Tốc độ baud (khớp DEBUG_SERIAL_BAUD trên ESP32)
-SERIAL_HEARTBEAT_INTERVAL = 3.0         # Chu kỳ heartbeat lặp lại (giây)
-
-# ──────────────────────────────────────────────────────────────────────────────
 # Cấu hình CAN Bus (RK3588 Native SocketCAN can0 / PC dev test)
 # ──────────────────────────────────────────────────────────────────────────────
 CAN_ENABLED        = False           # Bật/tắt CAN Bus (True khi chạy với phần cứng CAN)
@@ -97,20 +88,4 @@ SHM_VIDEO_NAME       = 'dms_video_shm'  # Tên POSIX Shared Memory cho video fra
 TELEMETRY_PUSH_HZ    = 10             # Tần suất đẩy telemetry JSON (Hz)
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Hàm hỗ trợ
-# ──────────────────────────────────────────────────────────────────────────────
-def setup_cuda_dlls():
-    """
-    Tự động nạp DLL CUDA trên Windows (ONNX Runtime CUDA EP).
-    Clone từ run_webcam_onnx.py L18-24.
-    Phải gọi TRƯỚC khi import onnxruntime.
-    """
-    if sys.platform == 'win32':
-        site_packages = os.path.join(sys.prefix, 'Lib', 'site-packages')
-        for sub in ['nvidia/cublas/bin', 'nvidia/cudnn/bin',
-                     'nvidia/cuda_runtime/bin']:
-            dll_path = os.path.join(site_packages, sub.replace('/', os.sep))
-            if os.path.exists(dll_path):
-                os.add_dll_directory(dll_path)
-                os.environ['PATH'] = dll_path + os.pathsep + os.environ['PATH']
+

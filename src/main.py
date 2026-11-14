@@ -7,6 +7,7 @@ MediaPipe FaceLandmarker không thread-safe → bắt buộc chạy trên main t
 
 Logic pipeline giữ nguyên 100% từ run_webcam_onnx.py.
 """
+import signal
 import sys
 import time
 from pathlib import Path
@@ -36,7 +37,6 @@ from src.config import (
     LANDMARK_TASK, LANDMARK_URL,
     MIN_FACE_DETECTION_CONFIDENCE, MIN_TRACKING_CONFIDENCE,
     MAR_THRESHOLD,
-    SERIAL_ENABLED, SERIAL_PORT, SERIAL_BAUDRATE, SERIAL_HEARTBEAT_INTERVAL,
     CAN_ENABLED, CAN_INTERFACE, CAN_CHANNEL,
     CAN_BAUDRATE, CAN_ARBITRATION_ID, CAN_SEND_INTERVAL,
     CAN_FEEDBACK_ID, CAN_WATCHDOG_TIMEOUT,
@@ -49,7 +49,6 @@ from src.detection.face_extractor import FaceRegionExtractor
 from src.inference.engine import InferenceEngine
 from src.payload.can_payload import build_can_payload
 from src.can_bus.can_sender import CANSenderThread
-from src.debug.serial_debugger import SerialDebugger
 from src.display.renderer import Renderer
 from src.bridge.ipc_manager import IPCManager
 
@@ -81,20 +80,10 @@ def main():
     print("🧠 Khởi tạo ONNX Inference Engine...")
     inference = InferenceEngine(state)
 
-    # ── 5. Khởi tạo Renderer ──
+    # ── 5. Khởi tạo Renderer (Frame decorator cho Web Dashboard stream) ──
     renderer = Renderer()
 
-    # ── 6. Khởi tạo Serial Debugger (Giao tiếp ESP32) ──
-    # Khởi tạo TRƯỚC khi start threads để thời gian chờ ESP32 boot (2s)
-    # không làm gián đoạn pipeline camera đang chạy.
-    debugger = SerialDebugger(
-        port=SERIAL_PORT,
-        baudrate=SERIAL_BAUDRATE,
-        heartbeat_interval=SERIAL_HEARTBEAT_INTERVAL,
-        enabled=SERIAL_ENABLED,
-    )
-
-    # ── 7. Khởi tạo CAN Bus Sender (Giao tiếp Ngoại vi Ô tô — Hai chiều) ──
+    # ── 6. Khởi tạo CAN Bus Sender (Giao tiếp Ngoại vi Ô tô — Hai chiều) ──
     can_sender = CANSenderThread(
         interface=CAN_INTERFACE,
         channel=CAN_CHANNEL,
@@ -107,7 +96,7 @@ def main():
         shared_state=state,
     )
 
-    # ── 7b. Khởi tạo Bridge (Process 2: Web Server) ──
+    # ── 7. Khởi tạo Bridge (Process 2: Web Server) ──
     ipc_manager = None
     if BRIDGE_ENABLED:
         print(f"Khởi tạo Bridge (SharedMemory + Server Process trên cổng {BRIDGE_PORT})...")
@@ -117,18 +106,31 @@ def main():
         )
         ipc_manager.start_server_process(host=BRIDGE_HOST, port=BRIDGE_PORT)
 
-    # ── 8. Start threads ──
+    # ── 8. Thiết lập Graceful Shutdown (Headless Signal Handling) ──
+    running = True
+
+    def signal_handler(signum, frame_signal):
+        nonlocal running
+        print(f"\n[DMS] Nhận tín hiệu ngắt ({signum}). Đang dừng pipeline...")
+        running = False
+
+    signal.signal(signal.SIGINT, signal_handler)
+    if hasattr(signal, 'SIGTERM'):
+        signal.signal(signal.SIGTERM, signal_handler)
+
+    # ── 9. Start threads ──
     camera.start()
     inference.start()
     can_sender.start()
 
-    print("\nTất cả threads đã khởi động")
-    print("   Nhấn 'q' để thoát\n")
+    print("\nTất cả threads đã khởi động thành công (Headless Mode)")
+    print("   Truy cập Web Dashboard để xem video stream và telemetry")
+    print("   Nhấn Ctrl+C để thoát\n")
 
     prev_time = time.time()
 
     try:
-        while True:
+        while running:
             # ── Đọc frame từ Camera Thread ──
             ret, frame = camera.read()
             if not ret or frame is None:
@@ -176,11 +178,8 @@ def main():
                 level_id       = state.level_id
                 buffer_ready   = state.buffer_ready
 
-            # ── Build Payload 8-byte (thống nhất cho cả Serial UART và CAN Bus) ──
+            # ── Build Payload 8-byte (CAN Bus 2.0B) ──
             payload = build_can_payload(level_id, face_detected, buffer_ready)
-
-            # ── Gửi Serial sang ESP32 (On-Change + Heartbeat do SerialDebugger quản lý) ──
-            debugger.update(level_id, face_detected, payload.to_bytes(), current_time)
 
             # ── Đẩy payload sang CAN Sender Thread (non-blocking) ──
             can_sender.post(payload)
@@ -196,7 +195,7 @@ def main():
                 alert_ecu_state     = state.alert_ecu_state
                 alert_ecu_hw_health = state.alert_ecu_hw_health
 
-            # ── Render Bounding Box + HUD Overlay lên frame ──
+            # ── Render Bounding Box + HUD Overlay lên frame (phục vụ stream Web Dashboard) ──
             renderer.draw(
                 frame=frame,
                 label_text=label_text,
@@ -220,22 +219,16 @@ def main():
                 ipc_manager.write_video_frame(frame)
                 ipc_manager.post_telemetry(state.get_telemetry_snapshot())
 
-            cv2.imshow('DMS Pipeline v2 (Multi-Thread)', frame)
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                break
-
     except KeyboardInterrupt:
-        print("\nDừng bởi người dùng")
+        print("\nDừng bởi người dùng (KeyboardInterrupt)")
     finally:
-        print("Đang dọn dẹp...")
+        print("Đang dọn dẹp tài nguyên...")
         if ipc_manager is not None:
             ipc_manager.cleanup()
         camera.stop()
-        debugger.close()
         can_sender.stop()
         inference.stop()
-        cv2.destroyAllWindows()
-        print("Đã thoát sạch")
+        print("Đã thoát sạch pipeline DMS")
 
 
 if __name__ == '__main__':
